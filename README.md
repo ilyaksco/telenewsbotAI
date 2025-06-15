@@ -35,7 +35,7 @@ To get this bot running on your local machine, follow these steps.
 
 1.  **Clone this repository:**
     ```sh
-    git clone [https://github.com/ilyaksco/news-bot-telegram.git](https://github.com/ilyaksco/news-bot-telegram.git)
+    git clone https://github.com/ilyaksco/news-bot-telegram.git
     ```
 
 2.  **Navigate into the project directory:**
