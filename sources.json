@@ -1,0 +1,10 @@
+[
+    {
+      "type": "rss",
+      "url": "https://www.theverge.com/rss/index.xml"
+    },
+    {
+      "type": "rss",
+      "url": "https://www.theguardian.com/uk/rss"
+    }
+  ]

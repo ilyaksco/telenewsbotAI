@@ -1,0 +1,8 @@
+news-bot
+news-bot.exe
+.env
+newsbot.db
+newsbot.db-journal
+.DS_Store
+Thumbs.db
+/vendor/
