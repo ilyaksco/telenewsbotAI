@@ -11,10 +11,10 @@ import (
 	"news-bot/internal/news_fetcher"
 	"news-bot/internal/scheduler"
 	"news-bot/internal/storage"
-	"os" 
+	"os"
 )
 
-
+//go:embed locales
 var localeFiles embed.FS
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 		log.Fatalf("Failed to create scheduler: %v", err)
 	}
 
-	summarizer, err := ai.NewSummarizer(ctx, cfg.GeminiAPIKey, cfg.AiPrompt)
+	summarizer, err := ai.NewSummarizer(ctx, cfg.GeminiAPIKey, cfg.GeminiModel, cfg.AiPrompt)
 	if err != nil {
 		log.Fatalf("Failed to create AI summarizer: %v", err)
 	}

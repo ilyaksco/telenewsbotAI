@@ -18,14 +18,14 @@ import (
 )
 
 type TelegramBot struct {
-	api            *tgbotapi.BotAPI
-	cfg            config.Config
-	localizer      *localization.Localizer
-	fetcher        *news_fetcher.Fetcher
-	scheduler      *scheduler.Scheduler
-	summarizer     *ai.Summarizer
-	storage        *storage.Storage
-	postedArticles map[string]bool
+	api             *tgbotapi.BotAPI
+	cfg             config.Config
+	localizer       *localization.Localizer
+	fetcher         *news_fetcher.Fetcher
+	scheduler       *scheduler.Scheduler
+	summarizer      *ai.Summarizer
+	storage         *storage.Storage
+	postedArticles  map[string]bool
 	newsSourcesJSON string
 }
 
@@ -49,14 +49,14 @@ func NewBot(
 	}
 
 	return &TelegramBot{
-		api:            api,
-		cfg:            cfg,
-		localizer:      localizer,
-		fetcher:        fetcher,
-		scheduler:      scheduler,
-		summarizer:     summarizer,
-		storage:        storage,
-		postedArticles: postedLinks,
+		api:             api,
+		cfg:             cfg,
+		localizer:       localizer,
+		fetcher:         fetcher,
+		scheduler:       scheduler,
+		summarizer:      summarizer,
+		storage:         storage,
+		postedArticles:  postedLinks,
 		newsSourcesJSON: newsSourcesJSON,
 	}, nil
 }
@@ -89,7 +89,6 @@ func (b *TelegramBot) scheduleNewsFetching() {
 
 func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 	log.Println("Discovering article links from configured sources file...")
-	// Gunakan konten JSON yang sudah tersimpan
 	discoveredArticles, err := b.fetcher.DiscoverArticles(b.newsSourcesJSON)
 	if err != nil {
 		log.Printf("Error discovering articles: %v", err)
@@ -114,7 +113,6 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 		}
 
 		log.Printf("Found new article link: %s. Scraping full content...", articleStub.Link)
-		// Scrape details untuk mendapatkan konten penuh
 		fullArticle, err := b.fetcher.ScrapeArticleDetails(articleStub.Link)
 		if err != nil {
 			log.Printf("Could not scrape article '%s': %v", articleStub.Link, err)
@@ -127,7 +125,11 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 			continue
 		}
 
-		b.sendArticleToChannel(fullArticle, summary)
+		err = b.sendArticleToChannel(fullArticle, summary)
+		if err != nil {
+			log.Printf("Failed to send article '%s', it will be retried next cycle: %v", fullArticle.Title, err)
+			continue
+		}
 
 		err = b.storage.MarkAsPosted(fullArticle.Link)
 		if err != nil {
@@ -140,13 +142,13 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 	}
 }
 
-func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summary string) {
+func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summary string) error {
 	caption := b.formatCaption(article, summary)
 
 	chatID, err := strconv.ParseInt(b.cfg.TelegramChatID, 10, 64)
 	if err != nil {
 		log.Printf("Invalid TelegramChatID. It must be a number. Value: %s", b.cfg.TelegramChatID)
-		return
+		return err
 	}
 
 	if article.ImageURL == "" {
@@ -155,6 +157,7 @@ func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summar
 		msg.DisableWebPagePreview = true
 		if _, err := b.api.Send(msg); err != nil {
 			log.Printf("Failed to send text message: %v", err)
+			return err
 		}
 	} else {
 		photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(article.ImageURL))
@@ -168,24 +171,36 @@ func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summar
 			msg.DisableWebPagePreview = true
 			if _, err_text := b.api.Send(msg); err_text != nil {
 				log.Printf("Failed to send message as text either: %v", err_text)
+				return err_text
 			}
 		}
 	}
 	log.Printf("Successfully posted article to channel: %s", article.Title)
+	return nil
 }
 
 func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary string) string {
-	replacer := strings.NewReplacer(
+	markdownEscaper := strings.NewReplacer(
 		"_", "\\_", "*", "\\*", "[", "\\[", "]", "\\]", "(",
 		"\\(", ")", "\\)", "~", "\\~", "`", "\\`", ">", "\\>",
 		"#", "\\#", "+", "\\+", "-", "\\-", "=", "\\=", "|",
 		"\\|", "{", "\\{", "}", "\\}", ".", "\\.", "!", "\\!",
 	)
 
-	title := replacer.Replace(article.Title)
-	escapedSummary := replacer.Replace(summary)
+	escapedTitle := markdownEscaper.Replace(article.Title)
+	escapedSummary := markdownEscaper.Replace(summary)
+	escapedDescription := markdownEscaper.Replace(article.Description)
 
-	return fmt.Sprintf("*%s*\n\n%s\n\n[Sumber](%s)", title, escapedSummary, article.Link)
+	templateReplacer := strings.NewReplacer(
+		"{title}", escapedTitle,
+		"{summary}", escapedSummary,
+		"{link}", article.Link,
+		"{description}", escapedDescription,
+	)
+
+	caption := templateReplacer.Replace(b.cfg.TelegramMessageTemplate)
+
+	return caption
 }
 
 func (b *TelegramBot) listenForCommands() {

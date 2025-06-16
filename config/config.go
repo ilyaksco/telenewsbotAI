@@ -11,9 +11,11 @@ type Config struct {
 	TelegramBotToken        string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
 	TelegramChatID          string `envconfig:"TELEGRAM_CHAT_ID"   required:"true"`
 	GeminiAPIKey            string `envconfig:"GEMINI_API_KEY"     required:"true"`
+	GeminiModel             string `envconfig:"GEMINI_MODEL" default:"gemini-1.5-flash"`
 	DefaultLanguage         string `envconfig:"DEFAULT_LANGUAGE" default:"en"`
 	NewsSourcesFilePath     string `envconfig:"NEWS_SOURCES_FILE_PATH" required:"true"`
 	AiPrompt                string `envconfig:"AI_PROMPT"        required:"true"`
+	TelegramMessageTemplate string `envconfig:"TELEGRAM_MESSAGE_TEMPLATE" default:"*_{title}_*\n\n{summary}\n\n[Sumber]({link})"`
 	ScheduleIntervalMinutes int    `envconfig:"SCHEDULE_INTERVAL_MINUTES" default:"60"`
 	PostLimitPerRun         int    `envconfig:"POST_LIMIT_PER_RUN"         default:"5"`
 }

@@ -13,13 +13,13 @@ type Summarizer struct {
 	promptFormat string
 }
 
-func NewSummarizer(ctx context.Context, apiKey string, promptFormat string) (*Summarizer, error) {
+func NewSummarizer(ctx context.Context, apiKey string, modelName string, promptFormat string) (*Summarizer, error) {
 	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		return nil, err
 	}
 
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel(modelName)
 	return &Summarizer{
 		model:        model,
 		promptFormat: promptFormat,
