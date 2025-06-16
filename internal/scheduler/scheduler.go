@@ -19,14 +19,19 @@ func NewScheduler() (*Scheduler, error) {
 	return &Scheduler{instance: s}, nil
 }
 
-func (s *Scheduler) AddJob(interval time.Duration, job func()) {
+func (s *Scheduler) AddJob(tag string, interval time.Duration, job func()) {
 	_, err := s.instance.NewJob(
 		gocron.DurationJob(interval),
 		gocron.NewTask(job),
+		gocron.WithTags(tag),
 	)
 	if err != nil {
-		log.Printf("Error adding job to scheduler: %v", err)
+		log.Printf("Error adding job with tag %s to scheduler: %v", tag, err)
 	}
+}
+
+func (s *Scheduler) RemoveJobByTag(tag string) {
+	s.instance.RemoveByTags(tag)
 }
 
 func (s *Scheduler) Start() {

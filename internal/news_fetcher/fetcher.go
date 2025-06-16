@@ -1,28 +1,26 @@
 package news_fetcher
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"time" 
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-shiori/go-readability"
 	"github.com/mmcdole/gofeed"
 )
 
-
 type Article struct {
 	Title       string
 	Link        string
-	Description string 
-	TextContent string 
+	Description string
+	TextContent string
 	ImageURL    string
 }
 
-
 type Source struct {
+	ID           int64  `json:"id"`
 	Type         string `json:"type"`
 	URL          string `json:"url"`
 	LinkSelector string `json:"link_selector,omitempty"`
@@ -38,12 +36,7 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-func (f *Fetcher) DiscoverArticles(sourcesJSON string) ([]*Article, error) {
-	var sources []Source
-	if err := json.Unmarshal([]byte(sourcesJSON), &sources); err != nil {
-		return nil, fmt.Errorf("could not parse NEWS_SOURCES JSON: %w", err)
-	}
-
+func (f *Fetcher) DiscoverArticles(sources []Source) ([]*Article, error) {
 	var discoveredLinks []string
 	for _, source := range sources {
 		var links []string
@@ -107,7 +100,6 @@ func (f *Fetcher) fetchFromHomepage(pageURL, linkSelector string) ([]string, err
 	doc.Find(linkSelector).Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
-			// Mengubah link relatif menjadi absolut
 			u, err := url.Parse(href)
 			if err == nil {
 				links = append(links, base.ResolveReference(u).String())
@@ -116,7 +108,6 @@ func (f *Fetcher) fetchFromHomepage(pageURL, linkSelector string) ([]string, err
 	})
 	return links, nil
 }
-
 
 func (f *Fetcher) ScrapeArticleDetails(link string) (*Article, error) {
 	parsedURL, err := url.Parse(link)
