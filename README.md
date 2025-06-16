@@ -1,79 +1,85 @@
-# 🤖 News Bot for Telegram
+# 🤖 AI News Bot for Telegram (Advanced Edition)
 
 ![Go Version](https://img.shields.io/badge/Go-1.21%2B-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Built with Gemini](https://img.shields.io/badge/Built%20with-Gemini%20AI-blueviolet)
 
-An advanced Telegram bot that automatically fetches news from various sources, summarizes it using AI (Google Gemini), and posts it to your Telegram channel or group.
+An advanced, self-managing Telegram bot that automatically fetches news from various sources, summarizes it using AI (Google Gemini), and posts it to your Telegram channel. This bot is fully configurable in real-time directly from a Telegram chat interface.
 
 ---
 
 ## ✨ Key Features
 
--   🌐 **Multi-Source**: Fetches news from multiple sources simultaneously, supporting both RSS Feeds and direct web page scraping.
--   🗂️ **Flexible Configuration**: All news sources are managed in a single, easy-to-edit `sources.json` file.
--   📰 **Intelligent Scraper**: Capable of extracting the full clean content and main image from article pages for accurate results.
--   🧠 **AI Summaries**: Leverages Google Gemini to create concise and informative news summaries.
--   💾 **Persistent Anti-Duplicate**: Uses an SQLite database to ensure the same news is never posted twice.
--   🎛️ **Full Control**: The news checking schedule and post limit per cycle are easily configured in the `.env` file.
--   🧱 **Modular Codebase**: Built with a clean and organized Go project structure, making it easy to maintain and extend.
+-   **Database-Driven**: All settings and news sources are stored in a persistent SQLite database, making the bot robust and stateful.
+-   **Fully Interactive Management**: Configure every aspect of the bot directly from a Telegram chat using the `/settings` command. No more editing files and restarting!
+-   **Dynamic Source Management**: Add, view, and delete news sources (both RSS and Scrape types) in real-time through an interactive menu.
+-   **Role-Based Security**: A secure Superadmin/Admin system protects sensitive commands. The Superadmin (defined in `.env`) can grant or revoke admin privileges to other users via Telegram commands.
+-   **Live Component Reloading**: Changes to the AI model, prompt, or schedule interval take effect immediately without needing a bot restart.
+-   **Intelligent Scraper**: Capable of fetching news from both RSS Feeds and direct web page scraping.
+-   **AI Summaries**: Leverages Google Gemini to create concise and informative news summaries.
+-   **Duplicate Prevention**: Uses the database to ensure the same news article is never posted twice.
+-   **Safe & User-Friendly**: Features input validation with re-prompt loops and requires confirmation for critical actions like deleting a source.
 
 ---
 
 ## 🚀 Getting Started
 
-To get this bot running on your local machine, follow these steps.
+To get this bot running, follow these steps.
 
 ### 📋 Prerequisites
 
 -   [Go](https://go.dev/dl/) version 1.21 or newer installed.
--   A Telegram account.
+-   A Telegram account and your **Telegram User ID**. You can get your ID by messaging `@userinfobot`.
 -   An API Key for **Google Gemini**. Get one from [Google AI Studio](https://aistudio.google.com/).
 -   A **Telegram Bot** Token. Get one from [@BotFather](https://t.me/BotFather).
 
-### 🛠️ Installation
+### 🛠️ Installation & Setup
 
 1.  **Clone this repository:**
     ```sh
-    git clone https://github.com/ilyaksco/news-bot-telegram.git
+    git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+    cd your-repo-name
     ```
 
-2.  **Navigate into the project directory:**
-    ```sh
-    cd news-bot-telegram
-    ```
-
-3.  **Create your environment file from the example:**
+2.  **Create your environment file from the example:**
     ```sh
     cp .env.example .env
     ```
 
-4.  **Fill in the Configuration**: Open the `.env` file with a text editor and fill in all the variable values with your own keys and IDs.
+3.  **Fill in the Configuration**: Open the `.env` file and fill in the required variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SUPER_ADMIN_ID`, and `GEMINI_API_KEY`. The other variables can be left as default and changed later from within Telegram.
 
-5.  **Set Up News Sources**: Open the `sources.json` file and edit the list of news sources to your liking.
+4.  **Initial News Sources**: The `sources.json` file is used **only on the very first run** to populate the database. You can edit this file to set up your initial list of news sources. After the first run, this file is no longer used.
 
-6.  **Install Go dependencies:**
+5.  **Install Go dependencies:**
     ```sh
     go mod tidy
     ```
 
-7.  **Run the Bot!**
+6.  **Run the Bot!**
     ```sh
     go run main.go
     ```
-    Your bot is now live and will start checking for news based on the schedule.
+    On the first run, the bot will migrate settings from `.env` and sources from `sources.json` into its database (`newsbot.db`). On subsequent runs, it will load everything from the database.
 
 ---
 
-## ⚙️ Advanced Configuration
+## 🤖 Bot Management
 
--   **News Sources (`sources.json`)**: Manage all your news sources here.
-    -   `type`: Can be `"rss"` or `"scrape"`.
-    -   `url`: The URL to the RSS feed or the site's homepage.
-    -   `link_selector`: (Only for `scrape` type) The CSS selector to find article links on the page.
--   **Scheduling & AI Prompt (`.env`)**:
-    -   Modify `SCHEDULE_INTERVAL_MINUTES` and `POST_LIMIT_PER_RUN` to control posting frequency.
-    -   Modify `AI_PROMPT` to change the tone and style of the AI-generated summaries.
+Once the bot is running, all management is done through Telegram commands. You must be the Superadmin or an Admin to use these.
+
+-   `/settings`
+    This is the main entry point for all bot configuration. It will display the current settings and show buttons to edit them or manage news sources.
+
+-   `/setadmin {user_id} {true/false}`
+    (Superadmin only) Grants or revokes admin privileges for a given user ID.
+    -   Example to grant admin: `/setadmin 12345678 true`
+    -   Example to revoke admin: `/setadmin 12345678 false`
+
+-   `/cancel`
+    Cancels any ongoing configuration process, such as adding a new source or changing a setting.
+
+-   `/help`
+    Displays a list of available commands.
 
 ---
 
