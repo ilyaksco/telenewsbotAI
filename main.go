@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"log"
 	"news-bot/config"
 	"news-bot/internal/bot"
@@ -11,7 +10,6 @@ import (
 	"news-bot/internal/news_fetcher"
 	"news-bot/internal/scheduler"
 	"news-bot/internal/storage"
-	"os"
 	"strconv"
 )
 
@@ -65,7 +63,7 @@ func main() {
 	}
 	log.Printf("Superadmin with ID %d ensured.", cfg.SuperAdminID)
 
-	migrateSources(dbStorage, cfg.NewsSourcesFilePath)
+	// migrateSources(dbStorage, cfg.NewsSourcesFilePath) // This call is already commented out, now we remove the function body below.
 
 	localizer := localization.NewLocalizer(localeFiles)
 	fetcher := news_fetcher.NewFetcher()
@@ -81,31 +79,4 @@ func main() {
 	telegramBot.Start()
 }
 
-func migrateSources(s *storage.Storage, sourcesPath string) {
-	areEmpty, err := s.IsNewsSourcesEmpty()
-	if err != nil {
-		log.Printf("Could not check if news sources are empty: %v", err)
-		return
-	}
-	if !areEmpty {
-		log.Println("News sources already exist in database. Skipping migration.")
-		return
-	}
-	log.Println("No news sources found in database. Migrating from sources.json...")
-	sourcesJSON, err := os.ReadFile(sourcesPath)
-	if err != nil {
-		log.Printf("Could not read sources file for migration: %v", err)
-		return
-	}
-	var sources []news_fetcher.Source
-	if err := json.Unmarshal(sourcesJSON, &sources); err != nil {
-		log.Printf("Could not parse sources file for migration: %v", err)
-		return
-	}
-	for _, source := range sources {
-		if err := s.AddNewsSource(source); err != nil {
-			log.Printf("Failed to migrate source %s: %v", source.URL, err)
-		}
-	}
-	log.Println("News sources migration completed.")
-}
+// The migrateSources function that was here has been completely removed.

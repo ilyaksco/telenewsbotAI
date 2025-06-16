@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -19,11 +20,25 @@ type Article struct {
 	ImageURL    string
 }
 
+type DiscoveredArticle struct {
+	Link   string
+	Source Source
+}
+
 type Source struct {
 	ID           int64  `json:"id"`
 	Type         string `json:"type"`
 	URL          string `json:"url"`
 	LinkSelector string `json:"link_selector,omitempty"`
+	TopicID      int64  `json:"topic_id,omitempty"`
+	TopicName    string `json:"topic_name,omitempty"`
+}
+
+type AnalyzedLink struct {
+	Href        string
+	Text        string
+	Class       string
+	ParentClass string
 }
 
 type Fetcher struct {
@@ -36,8 +51,8 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-func (f *Fetcher) DiscoverArticles(sources []Source) ([]*Article, error) {
-	var discoveredLinks []string
+func (f *Fetcher) DiscoverArticles(sources []Source) ([]DiscoveredArticle, error) {
+	var discoveredArticles []DiscoveredArticle
 	for _, source := range sources {
 		var links []string
 		var err error
@@ -56,15 +71,16 @@ func (f *Fetcher) DiscoverArticles(sources []Source) ([]*Article, error) {
 			fmt.Printf("Warning: Failed to fetch from source %s: %v\n", source.URL, err)
 			continue
 		}
-		discoveredLinks = append(discoveredLinks, links...)
+
+		for _, link := range links {
+			discoveredArticles = append(discoveredArticles, DiscoveredArticle{
+				Link:   link,
+				Source: source,
+			})
+		}
 	}
 
-	var articles []*Article
-	for _, link := range discoveredLinks {
-		articles = append(articles, &Article{Link: link})
-	}
-
-	return articles, nil
+	return discoveredArticles, nil
 }
 
 func (f *Fetcher) fetchFromRSS(url string) ([]string, error) {
@@ -127,4 +143,50 @@ func (f *Fetcher) ScrapeArticleDetails(link string) (*Article, error) {
 		TextContent: article.TextContent,
 		ImageURL:    article.Image,
 	}, nil
+}
+
+func (f *Fetcher) AnalyzePageLinks(pageURL string) ([]AnalyzedLink, error) {
+	res, err := http.Get(pageURL)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("failed to fetch page: status code %d", res.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	base, err := url.Parse(pageURL)
+	if err != nil {
+		return nil, err
+	}
+
+	var links []AnalyzedLink
+	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists {
+			return
+		}
+
+		u, err := url.Parse(href)
+		if err != nil {
+			return
+		}
+		fullURL := base.ResolveReference(u).String()
+
+		class, _ := s.Attr("class")
+		parentClass, _ := s.Parent().Attr("class")
+
+		links = append(links, AnalyzedLink{
+			Href:        fullURL,
+			Text:        strings.TrimSpace(s.Text()),
+			Class:       class,
+			ParentClass: parentClass,
+		})
+	})
+	return links, nil
 }
