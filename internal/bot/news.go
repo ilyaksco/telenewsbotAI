@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/url"
 	"news-bot/internal/news_fetcher"
+	"news-bot/internal/storage"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +44,7 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 	log.Printf("Found %d total article links. Checking against %d known posts...", len(discoveredArticles), len(b.postedArticles))
 	b.configMutex.RLock()
 	postLimit := b.cfg.PostLimitPerRun
+	approvalEnabled := b.cfg.EnableApprovalSystem
 	b.configMutex.RUnlock()
 	postsCount := 0
 	for _, articleStub := range discoveredArticles {
@@ -55,10 +58,20 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 		if b.postedArticles[articleStub.Link] {
 			continue
 		}
+		isPending, err := b.storage.IsArticlePending(articleStub.Link)
+		if err != nil {
+			log.Printf("Error checking if article is pending: %v", err)
+			continue
+		}
+		if isPending {
+			continue
+		}
+
 		log.Printf("Found new article link: %s. Scraping full content...", articleStub.Link)
 		fullArticle, err := b.fetcher.ScrapeArticleDetails(articleStub.Link)
 		if err != nil {
 			log.Printf("Could not scrape article '%s': %v", articleStub.Link, err)
+			b.postedArticles[articleStub.Link] = true
 			continue
 		}
 		summary, err := b.summarizer.Summarize(ctx, fullArticle.TextContent)
@@ -66,16 +79,25 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 			log.Printf("Could not summarize article '%s': %v", fullArticle.Title, err)
 			continue
 		}
-		// Sekarang kita meneruskan 'articleStub.Source' ke fungsi pengiriman
-		err = b.sendArticleToChannel(fullArticle, summary, articleStub.Source)
-		if err != nil {
-			log.Printf("Failed to send article '%s', it will be retried next cycle: %v", fullArticle.Title, err)
-			continue
+
+		if approvalEnabled {
+			err = b.sendArticleToModeration(fullArticle, summary, articleStub.Source)
+			if err != nil {
+				log.Printf("Failed to send article to moderation '%s': %v", fullArticle.Title, err)
+				continue
+			}
+		} else {
+			err = b.sendArticleToChannel(fullArticle, summary, articleStub.Source)
+			if err != nil {
+				log.Printf("Failed to send article '%s', it will be retried next cycle: %v", fullArticle.Title, err)
+				continue
+			}
+			err = b.storage.MarkAsPosted(fullArticle.Link)
+			if err != nil {
+				log.Printf("CRITICAL: Failed to mark article as posted in DB: %v", err)
+			}
 		}
-		err = b.storage.MarkAsPosted(fullArticle.Link)
-		if err != nil {
-			log.Printf("CRITICAL: Failed to mark article as posted in DB: %v", err)
-		}
+
 		b.postedArticles[fullArticle.Link] = true
 		postsCount++
 		time.Sleep(5 * time.Second)
@@ -120,27 +142,24 @@ func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summar
 }
 
 func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary string, source news_fetcher.Source) string {
-	// Mengambil template dari konfigurasi
 	b.configMutex.RLock()
 	template := b.cfg.TelegramMessageTemplate
 	b.configMutex.RUnlock()
 
-	// Menyiapkan data untuk placeholder baru
 	topicName := source.TopicName
 	if topicName == "" {
-		topicName = "General" // Fallback jika topik tidak ada
+		topicName = "General"
 	}
 
 	sourceURL, err := url.Parse(source.URL)
 	sourceName := ""
 	if err == nil {
-		sourceName = sourceURL.Hostname() // Mengambil hostname, misal: www.theverge.com
+		sourceName = sourceURL.Hostname()
 		sourceName = strings.TrimPrefix(sourceName, "www.")
 	}
 
 	currentDate := time.Now().Format("January 2, 2006")
 
-	// Mengganti semua placeholder
 	templateReplacer := strings.NewReplacer(
 		"{title}", article.Title,
 		"{summary}", summary,
@@ -152,4 +171,58 @@ func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary strin
 	)
 
 	return templateReplacer.Replace(template)
+}
+
+func (b *TelegramBot) sendArticleToModeration(article *news_fetcher.Article, summary string, source news_fetcher.Source) error {
+	lang := b.getLang()
+	sourceURL, _ := url.Parse(source.URL)
+	sourceName := strings.TrimPrefix(sourceURL.Hostname(), "www.")
+	topicName := source.TopicName
+	if topicName == "" {
+		topicName = "General"
+	}
+	
+	pendingArticle := storage.PendingArticle{
+		Title:     article.Title,
+		Summary:   summary,
+		Link:      article.Link,
+		ImageURL:  article.ImageURL,
+		TopicName: topicName,
+		SourceName: sourceName,
+	}
+
+	pendingID, err := b.storage.AddPendingArticle(pendingArticle)
+	if err != nil {
+		return fmt.Errorf("failed to add pending article to db: %w", err)
+	}
+
+	b.configMutex.RLock()
+	approvalChatID := b.cfg.ApprovalChatID
+	if approvalChatID == 0 {
+		approvalChatID = b.cfg.SuperAdminID
+	}
+	b.configMutex.RUnlock()
+
+	caption := b.formatCaption(article, summary, source)
+	
+	moderationText := fmt.Sprintf("%s\n\n%s", b.localizer.GetMessage(lang, "approval_header"), caption)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_approve"), fmt.Sprintf("approve_article:%d", pendingID)),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit"), fmt.Sprintf("edit_article:%d", pendingID)),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_reject"), fmt.Sprintf("reject_article:%d", pendingID)),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(approvalChatID, moderationText)
+	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ReplyMarkup = &keyboard
+	
+	if _, err := b.api.Send(msg); err != nil {
+		return fmt.Errorf("failed to send moderation notification: %w", err)
+	}
+
+	log.Printf("Article '%s' sent for moderation.", article.Title)
+	return nil
 }

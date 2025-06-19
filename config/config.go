@@ -23,6 +23,8 @@ type Config struct {
 	TelegramMessageTemplate string `envconfig:"TELEGRAM_MESSAGE_TEMPLATE" default:"<b>{title}</b>\n\n{summary}\n\n<a href=\"{link}\">Sumber</a>" key:"telegram_message_template"`
 	ScheduleIntervalMinutes int    `envconfig:"SCHEDULE_INTERVAL_MINUTES" default:"60" key:"schedule_interval_minutes"`
 	PostLimitPerRun         int    `envconfig:"POST_LIMIT_PER_RUN"         default:"5" key:"post_limit_per_run"`
+	EnableApprovalSystem    bool   `envconfig:"ENABLE_APPROVAL_SYSTEM" default:"false" key:"enable_approval_system"`
+	ApprovalChatID          int64  `envconfig:"APPROVAL_CHAT_ID" default:"0" key:"approval_chat_id"`
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -68,6 +70,8 @@ func LoadConfigFromDB(s *storage.Storage) (*Config, bool, error) {
 	scheduleInterval, _ := strconv.Atoi(settings["schedule_interval_minutes"])
 	postLimit, _ := strconv.Atoi(settings["post_limit_per_run"])
 	superAdminID, _ := strconv.ParseInt(settings["super_admin_id"], 10, 64)
+	approvalSystem, _ := strconv.ParseBool(settings["enable_approval_system"])
+	approvalChatID, _ := strconv.ParseInt(settings["approval_chat_id"], 10, 64)
 
 	return &Config{
 		TelegramBotToken:        settings["telegram_bot_token"],
@@ -81,6 +85,8 @@ func LoadConfigFromDB(s *storage.Storage) (*Config, bool, error) {
 		TelegramMessageTemplate: settings["telegram_message_template"],
 		ScheduleIntervalMinutes: scheduleInterval,
 		PostLimitPerRun:         postLimit,
+		EnableApprovalSystem:    approvalSystem,
+		ApprovalChatID:          approvalChatID,
 	}, true, nil
 }
 
@@ -97,6 +103,8 @@ func SaveConfigToDB(s *storage.Storage, cfg *Config) error {
 		"telegram_message_template": cfg.TelegramMessageTemplate,
 		"schedule_interval_minutes": strconv.Itoa(cfg.ScheduleIntervalMinutes),
 		"post_limit_per_run":        strconv.Itoa(cfg.PostLimitPerRun),
+		"enable_approval_system":    strconv.FormatBool(cfg.EnableApprovalSystem),
+		"approval_chat_id":          strconv.FormatInt(cfg.ApprovalChatID, 10),
 	}
 
 	for key, value := range settings {

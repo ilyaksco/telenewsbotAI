@@ -66,7 +66,7 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	}
 	var builder strings.Builder
 	builder.WriteString(b.localizer.GetMessage(lang, "settings_title") + "\n\n")
-	displayOrder := []string{"super_admin_id", "telegram_chat_id", "ai_prompt", "post_limit_per_run", "schedule_interval_minutes", "gemini_model", "telegram_message_template", "default_language", "news_sources_file_path"}
+	displayOrder := []string{"super_admin_id", "telegram_chat_id", "ai_prompt", "post_limit_per_run", "schedule_interval_minutes", "gemini_model", "telegram_message_template", "default_language", "news_sources_file_path", "enable_approval_system", "approval_chat_id"}
 	sensitiveKeys := map[string]bool{"telegram_bot_token": true, "gemini_api_key": true}
 
 	for _, key := range displayOrder {
@@ -77,6 +77,9 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 		if sensitiveKeys[key] {
 			value = "********"
 		}
+		if key == "approval_chat_id" && value == "0" {
+			value = "Not Set (Defaults to Superadmin)"
+		}
 		displayName := b.localizer.GetMessage(lang, "setting_name_"+key)
 		format := b.localizer.GetMessage(lang, "settings_format")
 		builder.WriteString(fmt.Sprintf(format, displayName, value))
@@ -84,7 +87,12 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	builder.WriteString(b.localizer.GetMessage(lang, "settings_edit_prompt"))
 	msg := tgbotapi.NewMessage(message.Chat.ID, builder.String())
 	msg.ParseMode = tgbotapi.ModeHTML
-	// Menambahkan tombol "Manage Topics" ke keyboard
+
+	approvalStatusText := "Enable Approval"
+	if b.cfg.EnableApprovalSystem {
+		approvalStatusText = "Disable Approval"
+	}
+
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("AI Prompt", "edit_ai_prompt"),
@@ -96,9 +104,13 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Schedule", "edit_schedule"),
-			tgbotapi.NewInlineKeyboardButtonData("Manage Sources", "manage_sources"),
+			tgbotapi.NewInlineKeyboardButtonData("Approval Chat ID", "edit_approval_chat_id"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(approvalStatusText, "toggle_approval_system"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Manage Sources", "manage_sources"),
 			tgbotapi.NewInlineKeyboardButtonData("Manage Topics", "manage_topics"),
 		),
 	)

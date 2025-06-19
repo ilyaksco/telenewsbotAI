@@ -19,6 +19,8 @@
     "ask_for_new_gemini_model": "Silakan pilih model AI yang baru:",
     "ask_for_new_msg_template": "Silakan kirimkan template pesan baru.\n\n<b>Placeholder yang Tersedia:</b>\n<code>{title}</code> - Judul artikel\n<code>{summary}</code> - Ringkasan dari AI\n<code>{description}</code> - Deskripsi asli dari artikel\n<code>{link}</code> - URL tautan ke artikel asli\n<code>{topic_name}</code> - Kategori/topik dari sumber berita\n<code>{source_name}</code> - Nama domain sumber berita\n<code>{date}</code> - Tanggal berita diposting\n\n<b>Format HTML yang Didukung:</b>\n<code>&lt;b&gt;Teks tebal&lt;/b&gt;</code> → <b>Teks tebal</b>\n<code>&lt;i&gt;Teks miring&lt;/i&gt;</code> → <i>Teks miring</i>\n<code>&lt;u&gt;Garis bawah&lt;/u&gt;</code> → <u>Garis bawah</u>\n<code>&lt;s&gt;Coret&lt;/s&gt;</code> → <s>Coret</s>\n<code>&lt;a href=\"URL\"&gt;Teks link&lt;/a&gt;</code>\n<code>&lt;code&gt;Teks mono&lt;/code&gt;</code>\n<code>&lt;blockquote&gt;Kutipan&lt;/blockquote&gt;</code>\n<code>&lt;blockquote expandable&gt;Kutipan yang bisa diperluas&lt;/blockquote&gt;</code>\n\n<b>Contoh Penggunaan:</b>\n<code>&lt;b&gt;{title}&lt;/b&gt;\n#{topic_name}\n\n{summary}\n\n📅 {date} | 📰 {source_name}\n&lt;a href=\"{link}\"&gt;Baca Selengkapnya&lt;/a&gt;</code>",
     "ask_for_new_schedule": "Silakan kirimkan interval jadwal baru (dalam menit, contoh: 60).",
+    "ask_for_approval_chat_id": "Silakan kirimkan ID Chat untuk notifikasi persetujuan. Ini bisa berupa ID pengguna atau ID grup (untuk grup, gunakan tanda negatif, contoh: -100123456). Kirim 0 untuk menggunakan chat Superadmin sebagai default.",
+    "ask_for_edited_summary": "Silakan kirim ringkasan baru hasil editan untuk postingan ini. Anda bisa salin, tempel, dan ubah teks dari pesan aslinya.",
     "setting_updated_success": "Setelan berhasil diperbarui!",
     "invalid_input_not_a_number": "Input tidak valid. Harap berikan sebuah angka.",
     "setting_update_cancelled": "Operasi dibatalkan.",
@@ -41,6 +43,9 @@
     "confirm_delete_prompt": "Anda yakin ingin menghapus sumber ini?\n\n<code>%s</code>",
     "btn_yes_delete": "✅ Ya, Hapus",
     "btn_no_cancel": "❌ Tidak, Batal",
+    "btn_approve": "✅ Setujui",
+    "btn_edit": "✏️ Edit",
+    "btn_reject": "❌ Tolak",
     "permission_denied": "Anda tidak memiliki izin untuk menggunakan perintah ini.",
     "setadmin_usage": "Penggunaan: /setadmin {user_id} {true/false}",
     "setadmin_success": "Status admin untuk pengguna %d telah diperbarui.",
@@ -53,5 +58,11 @@
     "setting_name_schedule_interval_minutes": "Interval Jadwal (menit)",
     "setting_name_telegram_chat_id": "ID Channel Target",
     "setting_name_telegram_message_template": "Template Pesan Postingan",
-    "setting_name_super_admin_id": "ID Superadmin"
+    "setting_name_super_admin_id": "ID Superadmin",
+	"setting_name_enable_approval_system": "Aktifkan Persetujuan Post",
+    "setting_name_approval_chat_id": "ID Chat Notifikasi Persetujuan",
+    "approval_header": "<b>PERLU PERSETUJUAN</b>",
+    "approval_header_edited": "<b>TELAH DIEDIT - PERLU PERSETUJUAN</b>",
+    "approval_action_approved": "✅ <i>Disetujui oleh %s</i>",
+    "approval_action_rejected": "❌ <i>Ditolak oleh %s</i>"
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"news-bot/internal/news_fetcher"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -16,6 +17,17 @@ type Storage struct {
 type Topic struct {
 	ID   int64
 	Name string
+}
+
+type PendingArticle struct {
+	ID        int64
+	Title     string
+	Summary   string
+	Link      string
+	ImageURL  string
+	TopicName string
+	SourceName string
+	CreatedAt time.Time
 }
 
 func NewStorage(dbPath string) (*Storage, error) {
@@ -41,6 +53,7 @@ func (s *Storage) initSchema() error {
 		`CREATE TABLE IF NOT EXISTS news_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, url TEXT NOT NULL UNIQUE, link_selector TEXT, topic_id INTEGER, FOREIGN KEY(topic_id) REFERENCES topics(id));`,
 		`CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_admin BOOLEAN NOT NULL DEFAULT FALSE);`,
 		`CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);`,
+		`CREATE TABLE IF NOT EXISTS pending_articles (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, summary TEXT NOT NULL, link TEXT NOT NULL UNIQUE, image_url TEXT, topic_name TEXT, source_name TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
 	}
 	for _, query := range queries {
 		if _, err := s.db.Exec(query); err != nil {
@@ -195,6 +208,54 @@ func (s *Storage) GetTopics() ([]Topic, error) {
 		topics = append(topics, topic)
 	}
 	return topics, nil
+}
+
+func (s *Storage) AddPendingArticle(article PendingArticle) (int64, error) {
+	query := `INSERT INTO pending_articles (title, summary, link, image_url, topic_name, source_name) VALUES (?, ?, ?, ?, ?, ?)`
+	res, err := s.db.Exec(query, article.Title, article.Summary, article.Link, article.ImageURL, article.TopicName, article.SourceName)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Storage) GetPendingArticle(id int64) (*PendingArticle, error) {
+	query := `SELECT id, title, summary, link, image_url, topic_name, source_name, created_at FROM pending_articles WHERE id = ?`
+	row := s.db.QueryRow(query, id)
+
+	var article PendingArticle
+	var imageURL, topicName, sourceName sql.NullString
+	if err := row.Scan(&article.ID, &article.Title, &article.Summary, &article.Link, &imageURL, &topicName, &sourceName, &article.CreatedAt); err != nil {
+		return nil, err
+	}
+
+	article.ImageURL = imageURL.String
+	article.TopicName = topicName.String
+	article.SourceName = sourceName.String
+
+	return &article, nil
+}
+
+func (s *Storage) IsArticlePending(link string) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM pending_articles WHERE link = ?)`
+	err := s.db.QueryRow(query, link).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (s *Storage) DeletePendingArticle(id int64) error {
+	query := `DELETE FROM pending_articles WHERE id = ?`
+	_, err := s.db.Exec(query, id)
+	return err
+}
+
+func (s *Storage) UpdatePendingArticleSummary(id int64, summary string) error {
+	query := `UPDATE pending_articles SET summary = ? WHERE id = ?`
+	_, err := s.db.Exec(query, summary, id)
+	return err
 }
 
 func (s *Storage) Close() {

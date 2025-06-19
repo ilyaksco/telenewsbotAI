@@ -16,8 +16,9 @@ import (
 )
 
 type ConversationState struct {
-	Step          string
-	PendingSource news_fetcher.Source
+	Step             string
+	PendingSource    news_fetcher.Source
+	PendingArticleID int64
 }
 
 type TelegramBot struct {

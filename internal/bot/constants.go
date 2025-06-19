@@ -9,5 +9,7 @@ const (
 	StateAwaitingSourceSelector  = "awaiting_source_selector"
 	StateAwaitingTopicName       = "awaiting_topic_name"
 	StateAwaitingTopicSelection  = "awaiting_topic_selection"
+	StateAwaitingApprovalChatID  = "awaiting_approval_chat_id"
+	StateAwaitingArticleEdit     = "awaiting_article_edit"
 	newsFetchingJobTag           = "news_fetching_job"
 )

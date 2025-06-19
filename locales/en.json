@@ -19,6 +19,8 @@
     "ask_for_new_gemini_model": "Please select the new AI model:",
     "ask_for_new_msg_template": "Please send the new message template.\n\n<b>Available Placeholders:</b>\n<code>{title}</code> - The article title\n<code>{summary}</code> - The AI-generated summary\n<code>{description}</code> - The original short description\n<code>{link}</code> - The URL to the original article\n<code>{topic_name}</code> - The category/topic of the source\n<code>{source_name}</code> - The domain name of the source\n<code>{date}</code> - The date the article is posted\n\n<b>Supported HTML Tags:</b>\n<code>&lt;b&gt;Bold&lt;/b&gt;</code> → <b>Bold</b>\n<code>&lt;i&gt;Italic&lt;/i&gt;</code> → <i>Italic</i>\n<code>&lt;u&gt;Underline&lt;/u&gt;</code> → <u>Underline</u>\n<code>&lt;s&gt;Strikethrough&lt;/s&gt;</code> → <s>Strikethrough</s>\n<code>&lt;a href=\"URL\"&gt;Link&lt;/a&gt;</code>\n<code>&lt;code&gt;Mono&lt;/code&gt;</code>\n<code>&lt;blockquote&gt;Quote&lt;/blockquote&gt;</code>\n<code>&lt;blockquote expandable&gt;Expandable Quote&lt;/blockquote&gt;</code>\n\n<b>Example:</b>\n<code>&lt;b&gt;{title}&lt;/b&gt;\n#{topic_name}\n\n{summary}\n\n📅 {date} | 📰 {source_name}\n&lt;a href=\"{link}\"&gt;Read More&lt;/a&gt;</code>",
     "ask_for_new_schedule": "Please send the new schedule interval (in minutes, e.g., 60).",
+    "ask_for_approval_chat_id": "Please send the Chat ID for approval notifications. This can be a user ID or a group ID (for groups, use a negative sign, e.g., -100123456). Send 0 to default to the Superadmin's chat.",
+    "ask_for_edited_summary": "Please send the new, edited summary for this post. You can copy, paste, and edit the text from the original message.",
     "setting_updated_success": "Setting successfully updated!",
     "invalid_input_not_a_number": "Invalid input. Please provide a number.",
     "setting_update_cancelled": "Operation cancelled.",
@@ -41,6 +43,9 @@
     "confirm_delete_prompt": "Are you sure you want to delete this source?\n\n<code>%s</code>",
     "btn_yes_delete": "✅ Yes, Delete",
     "btn_no_cancel": "❌ No, Cancel",
+    "btn_approve": "✅ Approve",
+    "btn_edit": "✏️ Edit",
+    "btn_reject": "❌ Reject",
     "permission_denied": "You do not have permission to use this command.",
     "setadmin_usage": "Usage: /setadmin {user_id} {true/false}",
     "setadmin_success": "Admin status for user %d has been updated.",
@@ -53,5 +58,11 @@
     "setting_name_schedule_interval_minutes": "Schedule Interval (minutes)",
     "setting_name_telegram_chat_id": "Target Channel ID",
     "setting_name_telegram_message_template": "Message Post Template",
-    "setting_name_super_admin_id": "Superadmin ID"
+    "setting_name_super_admin_id": "Superadmin ID",
+    "setting_name_enable_approval_system": "Enable Post Approval",
+    "setting_name_approval_chat_id": "Approval Notification Chat ID",
+    "approval_header": "<b>PENDING APPROVAL</b>",
+    "approval_header_edited": "<b>EDITED - PENDING APPROVAL</b>",
+    "approval_action_approved": "✅ <i>Approved by %s</i>",
+    "approval_action_rejected": "❌ <i>Rejected by %s</i>"
 }

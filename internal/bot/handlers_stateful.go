@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"fmt"
 	"log"
+	"news-bot/internal/news_fetcher"
 	"strconv"
 	"time"
 
@@ -61,10 +63,54 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 			}
 			operationSuccessful = true
 		}
+	case StateAwaitingApprovalChatID:
+		chatID, err := strconv.ParseInt(message.Text, 10, 64)
+		if err != nil {
+			msg.Text = b.localizer.GetMessage(lang, "invalid_input_not_a_number")
+		} else {
+			b.configMutex.Lock()
+			b.cfg.ApprovalChatID = chatID
+			b.configMutex.Unlock()
+			if err := b.storage.SetSetting("approval_chat_id", message.Text); err != nil {
+				log.Printf("Failed to update approval_chat_id in db: %v", err)
+			}
+			operationSuccessful = true
+		}
+	case StateAwaitingArticleEdit:
+		newSummary := message.Text
+		articleID := state.PendingArticleID
+
+		if err := b.storage.UpdatePendingArticleSummary(articleID, newSummary); err != nil {
+			log.Printf("Failed to update summary for pending article %d: %v", articleID, err)
+			msg.Text = "Failed to update summary."
+		} else {
+			b.clearUserState(userID)
+			log.Printf("Summary for pending article %d updated by user %d.", articleID, userID)
+			
+			pendingArticle, _ := b.storage.GetPendingArticle(articleID)
+			articleToFormat := &news_fetcher.Article{Title: pendingArticle.Title, Link: pendingArticle.Link}
+			sourceToFormat := news_fetcher.Source{URL: "https://" + pendingArticle.SourceName, TopicName: pendingArticle.TopicName}
+			
+			newCaption := b.formatCaption(articleToFormat, newSummary, sourceToFormat)
+			moderationText := fmt.Sprintf("%s\n\n%s", b.localizer.GetMessage(lang, "approval_header_edited"), newCaption)
+			
+			keyboard := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_approve"), fmt.Sprintf("approve_article:%d", articleID)),
+					tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit"), fmt.Sprintf("edit_article:%d", articleID)),
+					tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_reject"), fmt.Sprintf("reject_article:%d", articleID)),
+				),
+			)
+			
+			responseMsg := tgbotapi.NewMessage(message.Chat.ID, moderationText)
+			responseMsg.ParseMode = tgbotapi.ModeHTML
+			responseMsg.ReplyMarkup = &keyboard
+			b.api.Send(responseMsg)
+		}
+
 	case StateAwaitingSourceURL:
 		state.PendingSource.URL = message.Text
 		if state.PendingSource.Type == "rss" {
-			// Mengirim 0 sebagai messageID memaksa bot mengirim pesan baru, bukan mengedit.
 			b.sendTopicSelectionMenu(message.Chat.ID, 0, userID)
 			state.Step = StateAwaitingTopicSelection
 			b.setUserState(userID, state)
@@ -75,7 +121,6 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 		}
 	case StateAwaitingSourceSelector:
 		state.PendingSource.LinkSelector = message.Text
-		// Mengirim 0 sebagai messageID memaksa bot mengirim pesan baru, bukan mengedit.
 		b.sendTopicSelectionMenu(message.Chat.ID, 0, userID)
 		state.Step = StateAwaitingTopicSelection
 		b.setUserState(userID, state)
