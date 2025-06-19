@@ -28,12 +28,14 @@ type DiscoveredArticle struct {
 }
 
 type Source struct {
-	ID           int64  `json:"id"`
-	Type         string `json:"type"`
-	URL          string `json:"url"`
-	LinkSelector string `json:"link_selector,omitempty"`
-	TopicID      int64  `json:"topic_id,omitempty"`
-	TopicName    string `json:"topic_name,omitempty"`
+	ID                int64  `json:"id"`
+	Type              string `json:"type"`
+	URL               string `json:"url"`
+	LinkSelector      string `json:"link_selector,omitempty"`
+	TopicID           int64  `json:"topic_id,omitempty"`
+	TopicName         string `json:"topic_name,omitempty"`
+	DestinationChatID int64  `json:"destination_chat_id,omitempty"`
+	ReplyToMessageID  int64  `json:"reply_to_message_id,omitempty"`
 }
 
 type AnalyzedLink struct {

@@ -19,6 +19,7 @@ type ConversationState struct {
 	Step             string
 	PendingSource    news_fetcher.Source
 	PendingArticleID int64
+	PendingTopicName string
 }
 
 type TelegramBot struct {

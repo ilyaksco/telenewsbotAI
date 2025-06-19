@@ -19,11 +19,13 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	action := callbackData[0]
 	var data string
 	if len(callbackData) > 1 {
-		data = callbackData[1]
+		data = strings.Join(callbackData[1:], ":")
 	}
 	msg := tgbotapi.NewMessage(chatID, "")
 	callbackAns := tgbotapi.NewCallback(callback.ID, "")
+
 	switch action {
+	// Settings Callbacks
 	case "edit_ai_prompt":
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingAIPrompt})
 		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_ai_prompt")
@@ -76,6 +78,8 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.reloadSummarizer()
 		successMsg := tgbotapi.NewEditMessageText(chatID, messageID, b.localizer.GetMessage(lang, "setting_updated_success"))
 		b.api.Send(successMsg)
+
+	// Source Management Callbacks
 	case "manage_sources":
 		b.sendSourcesMenu(chatID, messageID)
 	case "view_sources":
@@ -94,6 +98,8 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		}
 		callbackAns.Text = b.localizer.GetMessage(lang, "source_deleted_success")
 		b.handleDeleteSourceMenu(chatID, messageID)
+
+	// Add Source Flow Callbacks
 	case "chose_source_type":
 		sourceType := data
 		state := &ConversationState{Step: StateAwaitingSourceURL, PendingSource: news_fetcher.Source{Type: sourceType}}
@@ -120,18 +126,8 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 			finalMsg := tgbotapi.NewEditMessageText(chatID, messageID, responseText)
 			b.api.Send(finalMsg)
 		}
-	case "approve_article":
-		b.handleApproveArticle(callback)
-	case "reject_article":
-		b.handleRejectArticle(callback)
-	case "edit_article":
-		b.handleEditArticle(callback)
-	case "cancel_edit":
-		b.sendSourcesMenu(chatID, messageID)
-	case "back_to_settings":
-		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
-		b.api.Request(deleteConfig)
-		b.handleSettingsCommand(callback.Message)
+
+	// Topic Management Callbacks
 	case "manage_topics":
 		b.sendTopicsMenu(chatID, messageID)
 	case "view_topics_list":
@@ -140,7 +136,47 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingTopicName})
 		msg := tgbotapi.NewEditMessageText(chatID, messageID, "Please send the new topic name.")
 		b.api.Send(msg)
+	case "manage_delete_topic_menu":
+		b.sendDeleteTopicMenu(chatID, messageID)
+	case "delete_topic":
+		topicID, _ := strconv.ParseInt(data, 10, 64)
+		inUse, err := b.storage.IsTopicInUse(topicID)
+		if err != nil {
+			log.Printf("Error checking if topic %d is in use: %v", topicID, err)
+			callbackAns.Text = "An error occurred."
+			b.api.Request(callbackAns)
+			return
+		}
+		if inUse {
+			callbackAns.Text = b.localizer.GetMessage(lang, "delete_topic_in_use")
+			callbackAns.ShowAlert = true
+		} else {
+			if err := b.storage.DeleteTopic(topicID); err != nil {
+				log.Printf("Failed to delete topic %d: %v", topicID, err)
+				callbackAns.Text = "Failed to delete topic."
+			} else {
+				callbackAns.Text = b.localizer.GetMessage(lang, "delete_topic_success")
+			}
+			b.sendDeleteTopicMenu(chatID, messageID)
+		}
+
+	// Approval System Callbacks
+	case "approve_article":
+		b.handleApproveArticle(callback)
+	case "reject_article":
+		b.handleRejectArticle(callback)
+	case "edit_article":
+		b.handleEditArticle(callback)
+
+	// General UI Callbacks
+	case "cancel_edit":
+		b.sendSourcesMenu(chatID, messageID)
+	case "back_to_settings":
+		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
+		b.api.Request(deleteConfig)
+		b.handleSettingsCommand(callback.Message)
 	}
+
 	if _, err := b.api.Request(callbackAns); err != nil {
 		log.Printf("Failed to answer callback query: %v", err)
 	}
@@ -156,15 +192,31 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 		return
 	}
 
+	topic, err := b.storage.GetTopicByName(pendingArticle.TopicName)
+	if err != nil {
+		log.Printf("Failed to get topic destination for '%s': %v", pendingArticle.TopicName, err)
+	}
+
 	articleToPost := &news_fetcher.Article{
 		Title:           pendingArticle.Title,
 		Link:            pendingArticle.Link,
 		ImageURL:        pendingArticle.ImageURL,
-		PublicationTime: &pendingArticle.CreatedAt, // Approximation, as we don't store original pub time
+		PublicationTime: &pendingArticle.CreatedAt,
 	}
-	source := news_fetcher.Source{
-		URL:       "https://" + pendingArticle.SourceName, // Reconstruct for formatting
-		TopicName: pendingArticle.TopicName,
+
+	var source news_fetcher.Source
+	if topic != nil {
+		source = news_fetcher.Source{
+			URL:               "https://" + pendingArticle.SourceName,
+			TopicName:         pendingArticle.TopicName,
+			DestinationChatID: topic.DestinationChatID,
+			ReplyToMessageID:  topic.ReplyToMessageID,
+		}
+	} else {
+		source = news_fetcher.Source{
+			URL:       "https://" + pendingArticle.SourceName,
+			TopicName: pendingArticle.TopicName,
+		}
 	}
 
 	if err := b.sendArticleToChannel(articleToPost, pendingArticle.Summary, source); err != nil {

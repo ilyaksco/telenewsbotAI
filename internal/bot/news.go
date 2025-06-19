@@ -112,18 +112,31 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 
 func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summary string, source news_fetcher.Source) error {
 	caption := b.formatCaption(article, summary, source)
-	b.configMutex.RLock()
-	chatIDStr := b.cfg.TelegramChatID
-	b.configMutex.RUnlock()
-	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
-	if err != nil {
-		log.Printf("Invalid TelegramChatID. It must be a number. Value: %s", chatIDStr)
-		return err
+	
+	chatID := source.DestinationChatID
+	replyToID := int(source.ReplyToMessageID)
+
+	// Fallback ke global chat ID jika tidak ada destinasi spesifik
+	if chatID == 0 {
+		b.configMutex.RLock()
+		globalChatIDStr := b.cfg.TelegramChatID
+		b.configMutex.RUnlock()
+		
+		parsedID, err := strconv.ParseInt(globalChatIDStr, 10, 64)
+		if err != nil {
+			log.Printf("Invalid global TelegramChatID. It must be a number. Value: %s", globalChatIDStr)
+			return err
+		}
+		chatID = parsedID
 	}
+
 	if article.ImageURL == "" {
 		msg := tgbotapi.NewMessage(chatID, caption)
 		msg.ParseMode = tgbotapi.ModeHTML
 		msg.DisableWebPagePreview = false
+		if replyToID != 0 {
+			msg.ReplyToMessageID = replyToID
+		}
 		if _, err := b.api.Send(msg); err != nil {
 			log.Printf("Failed to send text message: %v", err)
 			return err
@@ -132,11 +145,17 @@ func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summar
 		photoMsg := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(article.ImageURL))
 		photoMsg.Caption = caption
 		photoMsg.ParseMode = tgbotapi.ModeHTML
+		if replyToID != 0 {
+			photoMsg.ReplyToMessageID = replyToID
+		}
 		if _, err := b.api.Send(photoMsg); err != nil {
 			log.Printf("Failed to send photo message: %v. Trying to send as text.", err)
 			msg := tgbotapi.NewMessage(chatID, caption)
 			msg.ParseMode = tgbotapi.ModeHTML
 			msg.DisableWebPagePreview = false
+			if replyToID != 0 {
+				msg.ReplyToMessageID = replyToID
+			}
 			if _, err_text := b.api.Send(msg); err_text != nil {
 				log.Printf("Failed to send message as text either: %v", err_text)
 				return err_text
@@ -146,6 +165,7 @@ func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summar
 	log.Printf("Successfully posted article to channel: %s", article.Title)
 	return nil
 }
+
 
 func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary string, source news_fetcher.Source) string {
 	b.configMutex.RLock()

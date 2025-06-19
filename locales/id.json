@@ -1,6 +1,6 @@
 {
     "welcome_message": "Halo! Saya Bot Berita AI. Siap untuk menyajikan berita terbaru yang sudah dirangkum untuk Anda.",
-    "help_message": "Perintah yang tersedia:\n/start - Cek apakah bot aktif\n/help - Tampilkan pesan bantuan ini\n/settings - Tampilkan dan ubah setelan bot (Hanya Admin)\n/setadmin - Beri/cabut hak admin (Hanya Superadmin)\n/cancel - Batalkan operasi saat ini",
+    "help_message": "Perintah yang tersedia:\n/start - Cek apakah bot aktif\n/help - Tampilkan pesan bantuan ini\n/settings - Tampilkan dan ubah setelan bot (Hanya Admin)\n/setadmin - Beri/cabut hak admin (Hanya Superadmin)\n/set_target - Atur tujuan pengiriman untuk sebuah kategori berita (Hanya Admin)\n/cancel - Batalkan operasi saat ini",
     "settings_title": "<b>⚙️ Setelan Bot Saat Ini</b>",
     "settings_format": "<b>%s</b>: <code>%s</code>\n",
     "settings_error": "Terjadi kesalahan saat mengambil setelan. Silakan periksa log bot.",
@@ -18,7 +18,7 @@
     "ask_for_new_post_limit": "Silakan kirimkan batas postingan yang baru (harus berupa angka).",
     "ask_for_new_gemini_model": "Silakan pilih model AI yang baru:",
     "ask_for_new_msg_template": "Silakan kirimkan template pesan baru.\n\n<b>Placeholder yang Tersedia:</b>\n<code>{title}</code> - Judul artikel\n<code>{summary}</code> - Ringkasan dari AI\n<code>{description}</code> - Deskripsi asli dari artikel\n<code>{link}</code> - URL tautan ke artikel asli\n<code>{topic_name}</code> - Kategori/topik dari sumber berita\n<code>{source_name}</code> - Nama domain sumber berita\n<code>{date}</code> - Tanggal artikel diposting oleh bot\n<code>{publish_date}</code> - Tanggal publikasi asli artikel\n<code>{publish_time}</code> - Waktu publikasi asli artikel\n\n<b>Format HTML yang Didukung:</b>\n<code>&lt;b&gt;Teks tebal&lt;/b&gt;</code> → <b>Teks tebal</b>\n<code>&lt;i&gt;Teks miring&lt;/i&gt;</code> → <i>Teks miring</i>\n\n<b>Contoh Penggunaan:</b>\n<code>&lt;b&gt;{title}&lt;/b&gt;\n#{topic_name}\n\n{summary}\n\n📅 {publish_date} pukul {publish_time} | 📰 {source_name}\n&lt;a href=\"{link}\"&gt;Baca Selengkapnya&lt;/a&gt;</code>",
-    "ask_for_new_schedule": "Silakan kirimkan interval jadwal baru (dalam menit, contoh: 60 Menit).",
+    "ask_for_new_schedule": "Silakan kirimkan interval jadwal baru (dalam menit, contoh: 60).",
     "ask_for_rss_max_age": "Silakan kirimkan umur maksimal artikel RSS (dalam jam, contoh: 24).",
     "ask_for_approval_chat_id": "Silakan kirimkan ID Chat untuk notifikasi persetujuan. Ini bisa berupa ID pengguna atau ID grup (untuk grup, gunakan tanda negatif, contoh: -100123456). Kirim 0 untuk menggunakan chat Superadmin sebagai default.",
     "ask_for_edited_summary": "Silakan kirim ringkasan baru hasil editan untuk postingan ini. Anda bisa salin, tempel, dan ubah teks dari pesan aslinya.",
@@ -51,6 +51,7 @@
     "setadmin_usage": "Penggunaan: /setadmin {user_id} {true/false}",
     "setadmin_success": "Status admin untuk pengguna %d telah diperbarui.",
     "setadmin_superadmin_fail": "Tidak dapat mengubah status Superadmin.",
+    "set_target_prompt": "<b>Kaitkan Destinasi</b>\nLokasi ini (ChatID:<code>%d</code>, ThreadID:<code>%d</code>) akan dikaitkan dengan kategori berita yang mana?",
     "setting_name_ai_prompt": "Prompt AI Peringkas",
     "setting_name_default_language": "Bahasa Bot",
     "setting_name_gemini_model": "Model AI Gemini",
@@ -66,5 +67,13 @@
     "approval_header": "<b>PERLU PERSETUJUAN</b>",
     "approval_header_edited": "<b>TELAH DIEDIT - PERLU PERSETUJUAN</b>",
     "approval_action_approved": "✅ <i>Disetujui oleh %s</i>",
-    "approval_action_rejected": "❌ <i>Ditolak oleh %s</i>"
+    "approval_action_rejected": "❌ <i>Ditolak oleh %s</i>",
+    "set_target_usage": "<b>Penggunaan Perintah Salah.</b>\n\nFormat:\n<code>/set_target [NamaKategori] [ChatID] [MessageID]</code>\n\n<b>Cara Mendapatkan ID:</b>\n1. <b>[ChatID]</b>: Tambahkan bot seperti <code>@RawDataBot</code> ke grup/channel tujuan untuk mendapatkan ID-nya.\n2. <b>[MessageID]</b>: Salin link dari pesan 'pancingan' di tujuan. Angka terakhir pada link adalah MessageID.",
+    "set_target_invalid_id": "Format Chat ID atau Message ID tidak valid. Pastikan keduanya adalah angka.",
+	"set_target_topic_not_found": "Kategori internal '<b>%s</b>' tidak ditemukan di bot. Pastikan nama kategori benar dan tidak menggunakan spasi.",
+    "set_target_success": "✅ <b>Berhasil!</b>\nBerita dari kategori '<b>%s</b>' sekarang akan dikirim ke Chat ID <code>%d</code> dengan me-reply ke Pesan ID <code>%d</code>.",
+    "delete_topic_title": "Pilih topik yang ingin dihapus. Topik yang masih digunakan oleh sumber berita tidak bisa dihapus.",
+    "delete_topic_in_use": "Gagal! Topik ini masih digunakan oleh satu atau lebih sumber berita.",
+    "delete_topic_success": "Topik berhasil dihapus!",
+    "btn_back_to_menu": "⬅️Kembali Ke menu"
 }

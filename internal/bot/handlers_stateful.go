@@ -3,8 +3,8 @@ package bot
 import (
 	"fmt"
 	"log"
-	"news-bot/internal/news_fetcher"
 	"strconv"
+	"news-bot/internal/news_fetcher"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,7 +15,36 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 	lang := b.getLang()
 	msg := tgbotapi.NewMessage(message.Chat.ID, "")
 	operationSuccessful := false
+
 	switch state.Step {
+	case StateAwaitingTargetForward:
+		if message.ForwardFromChat == nil {
+			msg.Text = b.localizer.GetMessage(lang, "set_target_not_a_forward")
+			b.api.Send(msg)
+			return // Tetap dalam state yang sama, menunggu forward yang benar
+		}
+		chatID := message.ForwardFromChat.ID
+		messageID := message.ForwardFromMessageID
+
+		topic, err := b.storage.GetTopicByName(state.PendingTopicName)
+		if err != nil {
+			// Seharusnya tidak terjadi karena sudah dicek di command handler
+			log.Printf("Error getting topic by name in stateful handler: %v", err)
+			b.clearUserState(userID)
+			return
+		}
+
+		err = b.storage.UpdateTopicDestination(topic.ID, chatID, int64(messageID))
+		if err != nil {
+			log.Printf("Failed to update topic destination: %v", err)
+			msg.Text = "Error saving destination."
+		} else {
+			successText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_success"), state.PendingTopicName, chatID, messageID)
+			msg.Text = successText
+			msg.ParseMode = tgbotapi.ModeHTML
+		}
+		b.clearUserState(userID)
+
 	case StateAwaitingAIPrompt:
 		b.configMutex.Lock()
 		b.cfg.AiPrompt = message.Text

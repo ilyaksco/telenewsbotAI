@@ -84,8 +84,8 @@ func (b *TelegramBot) sendModelSelectionMenu(chatID int64, messageID int) {
 	text := b.localizer.GetMessage(lang, "ask_for_new_gemini_model")
 
 	availableModels := []struct {
-		DisplayName string // Teks yang tampil di tombol
-		InternalID  string // ID model resmi dari Google
+		DisplayName string
+		InternalID  string
 	}{
 		{DisplayName: "Gemini 1.5 Flash Latest", InternalID: "gemini-1.5-flash-8b-latest"},
 		{DisplayName: "Gemini 1.5 Flash", InternalID: "gemini-1.5-flash"},
@@ -99,7 +99,6 @@ func (b *TelegramBot) sendModelSelectionMenu(chatID int64, messageID int) {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button))
 	}
 
-	// Menambahkan tombol Batal di baris terakhir
 	cancelButton := tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_cancel"), "cancel_edit")
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(cancelButton))
 
@@ -145,13 +144,14 @@ func (b *TelegramBot) sendTopicsMenu(chatID int64, messageID int) {
 			tgbotapi.NewInlineKeyboardButtonData("Add New Topic", "add_new_topic"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Delete a Topic", "manage_delete_topic_menu"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⬅️ Back to Settings", "back_to_settings"),
 		),
 	)
 
 	var msg tgbotapi.Chattable
-	// Jika messageID bukan 0, berarti kita mengedit pesan yang ada (dari callback).
-	// Jika 0, kita mengirim pesan baru (dari perintah /settings -> manage_topics).
 	if messageID != 0 {
 		editMsg := tgbotapi.NewEditMessageText(chatID, messageID, text)
 		editMsg.ParseMode = tgbotapi.ModeHTML
@@ -169,6 +169,33 @@ func (b *TelegramBot) sendTopicsMenu(chatID int64, messageID int) {
 	}
 }
 
+func (b *TelegramBot) sendDeleteTopicMenu(chatID int64, messageID int) {
+	lang := b.getLang()
+	topics, err := b.storage.GetTopics()
+	if err != nil {
+		log.Printf("Failed to get topics for deletion: %v", err)
+		return
+	}
+
+	text := b.localizer.GetMessage(lang, "delete_topic_title")
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, topic := range topics {
+		buttonText := fmt.Sprintf("❌ %s", topic.Name)
+		callbackData := fmt.Sprintf("delete_topic:%d", topic.ID)
+		row := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(buttonText, callbackData))
+		rows = append(rows, row)
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Back to Topics Menu", "manage_topics")))
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	msg := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	msg.ReplyMarkup = &keyboard
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("Failed to send delete topic menu: %v", err)
+	}
+}
+
+
 func (b *TelegramBot) handleViewTopicsList(chatID int64, messageID int) {
 	topics, err := b.storage.GetTopics()
 	if err != nil {
@@ -177,12 +204,16 @@ func (b *TelegramBot) handleViewTopicsList(chatID int64, messageID int) {
 	}
 
 	var builder strings.Builder
-	builder.WriteString("<b>Available Topics:</b>\n\n")
+	builder.WriteString("<b>Available Topics & Destinations:</b>\n\n")
 	if len(topics) == 0 {
 		builder.WriteString("No topics found. Add one first!")
 	} else {
 		for _, topic := range topics {
-			builder.WriteString(fmt.Sprintf("- %s (ID: %d)\n", topic.Name, topic.ID))
+			dest := "Not Set"
+			if topic.DestinationChatID != 0 {
+				dest = fmt.Sprintf("ChatID: %d, ReplyToID: %d", topic.DestinationChatID, topic.ReplyToMessageID)
+			}
+			builder.WriteString(fmt.Sprintf("- %s (ID: %d)\n  └─ Destination: <i>%s</i>\n", topic.Name, topic.ID, dest))
 		}
 	}
 

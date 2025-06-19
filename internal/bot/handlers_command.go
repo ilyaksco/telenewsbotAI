@@ -13,13 +13,14 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	lang := b.getLang()
 	msg := tgbotapi.NewMessage(message.Chat.ID, "")
 	cmd := message.Command()
-	// Menghapus "topics" dari perintah yang dilindungi
+
 	protectedCommands := map[string]bool{"settings": true, "setadmin": true, "cancel": true}
 	if protectedCommands[cmd] && !b.isAdmin(message.From.ID) {
 		msg.Text = b.localizer.GetMessage(lang, "permission_denied")
 		b.api.Send(msg)
 		return
 	}
+
 	switch cmd {
 	case "start":
 		msg.Text = b.localizer.GetMessage(lang, "welcome_message")
@@ -28,12 +29,14 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	case "settings":
 		b.handleSettingsCommand(message)
 		return
-	// Menghapus case untuk "/topics"
 	case "analyzelinks":
 		b.handleAnalyzeLinksCommand(message)
 		return
 	case "setadmin":
 		b.handleSetAdminCommand(message)
+		return
+	case "set_target":
+		b.handleSetTargetCommand(message)
 		return
 	case "cancel":
 		b.handleCancelCommand(message)
@@ -46,6 +49,62 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	}
 }
 
+func (b *TelegramBot) handleSetTargetCommand(message *tgbotapi.Message) {
+	lang := b.getLang()
+	if !b.isAdmin(message.From.ID) {
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "permission_denied"))
+		b.api.Send(msg)
+		return
+	}
+
+	args := message.CommandArguments()
+	parts := strings.Fields(args)
+
+	if len(parts) != 3 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "set_target_usage"))
+		msg.ParseMode = tgbotapi.ModeHTML
+		b.api.Send(msg)
+		return
+	}
+
+	topicName := parts[0]
+	chatIDStr := parts[1]
+	messageIDStr := parts[2]
+
+	chatID, errChat := strconv.ParseInt(chatIDStr, 10, 64)
+	messageID, errMsg := strconv.ParseInt(messageIDStr, 10, 64)
+
+	if errChat != nil || errMsg != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "set_target_invalid_id"))
+		msg.ParseMode = tgbotapi.ModeHTML
+		b.api.Send(msg)
+		return
+	}
+
+	topic, err := b.storage.GetTopicByName(topicName)
+	if err != nil {
+		msgText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_topic_not_found"), topicName)
+		msg := tgbotapi.NewMessage(message.Chat.ID, msgText)
+		msg.ParseMode = tgbotapi.ModeHTML
+		b.api.Send(msg)
+		return
+	}
+
+	err = b.storage.UpdateTopicDestination(topic.ID, chatID, messageID)
+	if err != nil {
+		log.Printf("Failed to update topic destination: %v", err)
+		msg := tgbotapi.NewMessage(message.Chat.ID, "Error saving destination.")
+		b.api.Send(msg)
+		return
+	}
+
+	successText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_success"), topicName, chatID, messageID)
+	msg := tgbotapi.NewMessage(message.Chat.ID, successText)
+	msg.ParseMode = tgbotapi.ModeHTML
+	b.api.Send(msg)
+}
+
+// ... (sisa file sama persis dengan versi yang sudah berjalan baik)
 func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	lang := b.getLang()
 	settings, err := b.storage.GetAllSettings()

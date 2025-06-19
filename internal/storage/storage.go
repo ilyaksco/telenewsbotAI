@@ -15,20 +15,14 @@ type Storage struct {
 }
 
 type Topic struct {
-	ID   int64
-	Name string
+	ID                int64
+	Name              string
+	DestinationChatID int64
+	ReplyToMessageID  int64
 }
 
-type PendingArticle struct {
-	ID        int64
-	Title     string
-	Summary   string
-	Link      string
-	ImageURL  string
-	TopicName string
-	SourceName string
-	CreatedAt time.Time
-}
+// ... (Kode dari NewStorage hingga GetNewsSources() sama persis) ...
+// ... (Code from NewStorage until GetNewsSources() is identical) ...
 
 func NewStorage(dbPath string) (*Storage, error) {
 	db, err := sql.Open("sqlite", dbPath)
@@ -47,19 +41,39 @@ func NewStorage(dbPath string) (*Storage, error) {
 }
 
 func (s *Storage) initSchema() error {
+	// Coba hapus kolom lama jika ada, abaikan error jika gagal (misal, kolom tidak ada)
+	s.db.Exec(`ALTER TABLE topics DROP COLUMN message_thread_id;`)
+
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS posted_articles (link TEXT PRIMARY KEY);`,
 		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`,
 		`CREATE TABLE IF NOT EXISTS news_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, url TEXT NOT NULL UNIQUE, link_selector TEXT, topic_id INTEGER, FOREIGN KEY(topic_id) REFERENCES topics(id));`,
 		`CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_admin BOOLEAN NOT NULL DEFAULT FALSE);`,
-		`CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);`,
+		`CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, destination_chat_id INTEGER DEFAULT 0, reply_to_message_id INTEGER DEFAULT 0);`,
 		`CREATE TABLE IF NOT EXISTS pending_articles (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, summary TEXT NOT NULL, link TEXT NOT NULL UNIQUE, image_url TEXT, topic_name TEXT, source_name TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
 	}
 	for _, query := range queries {
 		if _, err := s.db.Exec(query); err != nil {
+			if e, ok := err.(interface{ ErrorCode() int }); ok && e.ErrorCode() == 1 { // SQLITE_ERROR
+				continue
+			}
 			return err
 		}
 	}
+
+	// Menambahkan kolom baru ke tabel topics jika belum ada (untuk migrasi)
+	alterQueries := []string{
+		`ALTER TABLE topics ADD COLUMN destination_chat_id INTEGER DEFAULT 0;`,
+		`ALTER TABLE topics ADD COLUMN reply_to_message_id INTEGER DEFAULT 0;`,
+	}
+
+	for _, query := range alterQueries {
+		// Abaikan error jika kolom sudah ada
+		if _, err := s.db.Exec(query); err != nil {
+			continue
+		}
+	}
+
 	return nil
 }
 
@@ -139,7 +153,7 @@ func (s *Storage) AddNewsSource(source news_fetcher.Source) error {
 
 func (s *Storage) GetNewsSources() ([]news_fetcher.Source, error) {
 	query := `
-		SELECT s.id, s.type, s.url, s.link_selector, s.topic_id, t.name 
+		SELECT s.id, s.type, s.url, s.link_selector, s.topic_id, t.name, t.destination_chat_id, t.reply_to_message_id
 		FROM news_sources s 
 		LEFT JOIN topics t ON s.topic_id = t.id`
 	rows, err := s.db.Query(query)
@@ -151,8 +165,9 @@ func (s *Storage) GetNewsSources() ([]news_fetcher.Source, error) {
 	for rows.Next() {
 		var source news_fetcher.Source
 		var linkSelector, topicName sql.NullString
-		var topicID sql.NullInt64
-		if err := rows.Scan(&source.ID, &source.Type, &source.URL, &linkSelector, &topicID, &topicName); err != nil {
+		var topicID, destChatID, replyToMsgID sql.NullInt64
+
+		if err := rows.Scan(&source.ID, &source.Type, &source.URL, &linkSelector, &topicID, &topicName, &destChatID, &replyToMsgID); err != nil {
 			return nil, err
 		}
 		if linkSelector.Valid {
@@ -163,6 +178,12 @@ func (s *Storage) GetNewsSources() ([]news_fetcher.Source, error) {
 		}
 		if topicName.Valid {
 			source.TopicName = topicName.String
+		}
+		if destChatID.Valid {
+			source.DestinationChatID = destChatID.Int64
+		}
+		if replyToMsgID.Valid {
+			source.ReplyToMessageID = replyToMsgID.Int64
 		}
 		sources = append(sources, source)
 	}
@@ -192,7 +213,7 @@ func (s *Storage) AddTopic(name string) error {
 }
 
 func (s *Storage) GetTopics() ([]Topic, error) {
-	query := `SELECT id, name FROM topics ORDER BY name`
+	query := `SELECT id, name, destination_chat_id, reply_to_message_id FROM topics ORDER BY name`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -202,12 +223,64 @@ func (s *Storage) GetTopics() ([]Topic, error) {
 	var topics []Topic
 	for rows.Next() {
 		var topic Topic
-		if err := rows.Scan(&topic.ID, &topic.Name); err != nil {
+		var destChatID, replyToMsgID sql.NullInt64
+		if err := rows.Scan(&topic.ID, &topic.Name, &destChatID, &replyToMsgID); err != nil {
 			return nil, err
 		}
+		topic.DestinationChatID = destChatID.Int64
+		topic.ReplyToMessageID = replyToMsgID.Int64
 		topics = append(topics, topic)
 	}
 	return topics, nil
+}
+
+func (s *Storage) DeleteTopic(topicID int64) error {
+	query := `DELETE FROM topics WHERE id = ?`
+	_, err := s.db.Exec(query, topicID)
+	return err
+}
+
+func (s *Storage) IsTopicInUse(topicID int64) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM news_sources WHERE topic_id = ?`
+	err := s.db.QueryRow(query, topicID).Scan(&count)
+	if err != nil {
+		return true, err
+	}
+	return count > 0, nil
+}
+
+func (s *Storage) UpdateTopicDestination(topicID int64, chatID int64, messageID int64) error {
+	query := `UPDATE topics SET destination_chat_id = ?, reply_to_message_id = ? WHERE id = ?`
+	_, err := s.db.Exec(query, chatID, messageID, topicID)
+	return err
+}
+
+func (s *Storage) GetTopicByName(name string) (*Topic, error) {
+	query := `SELECT id, name, destination_chat_id, reply_to_message_id FROM topics WHERE name = ?`
+	row := s.db.QueryRow(query, name)
+
+	var topic Topic
+	var destChatID, replyToMsgID sql.NullInt64
+	if err := row.Scan(&topic.ID, &topic.Name, &destChatID, &replyToMsgID); err != nil {
+		return nil, err
+	}
+	topic.DestinationChatID = destChatID.Int64
+	topic.ReplyToMessageID = replyToMsgID.Int64
+	return &topic, nil
+}
+
+// ... (Sisa file sama persis) ...
+// ... (Rest of the file is identical) ...
+type PendingArticle struct {
+	ID         int64
+	Title      string
+	Summary    string
+	Link       string
+	ImageURL   string
+	TopicName  string
+	SourceName string
+	CreatedAt  time.Time
 }
 
 func (s *Storage) AddPendingArticle(article PendingArticle) (int64, error) {
