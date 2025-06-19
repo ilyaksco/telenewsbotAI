@@ -63,6 +63,19 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 			}
 			operationSuccessful = true
 		}
+	case StateAwaitingRSSMaxAge:
+		hours, err := strconv.Atoi(message.Text)
+		if err != nil || hours <= 0 {
+			msg.Text = b.localizer.GetMessage(lang, "invalid_input_not_a_number")
+		} else {
+			b.configMutex.Lock()
+			b.cfg.RSSMaxAgeHours = hours
+			b.configMutex.Unlock()
+			if err := b.storage.SetSetting("rss_max_age_hours", message.Text); err != nil {
+				log.Printf("Failed to update rss_max_age_hours in db: %v", err)
+			}
+			operationSuccessful = true
+		}
 	case StateAwaitingApprovalChatID:
 		chatID, err := strconv.ParseInt(message.Text, 10, 64)
 		if err != nil {
@@ -86,14 +99,14 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 		} else {
 			b.clearUserState(userID)
 			log.Printf("Summary for pending article %d updated by user %d.", articleID, userID)
-			
+
 			pendingArticle, _ := b.storage.GetPendingArticle(articleID)
 			articleToFormat := &news_fetcher.Article{Title: pendingArticle.Title, Link: pendingArticle.Link}
 			sourceToFormat := news_fetcher.Source{URL: "https://" + pendingArticle.SourceName, TopicName: pendingArticle.TopicName}
-			
+
 			newCaption := b.formatCaption(articleToFormat, newSummary, sourceToFormat)
 			moderationText := fmt.Sprintf("%s\n\n%s", b.localizer.GetMessage(lang, "approval_header_edited"), newCaption)
-			
+
 			keyboard := tgbotapi.NewInlineKeyboardMarkup(
 				tgbotapi.NewInlineKeyboardRow(
 					tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_approve"), fmt.Sprintf("approve_article:%d", articleID)),
@@ -101,7 +114,7 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 					tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_reject"), fmt.Sprintf("reject_article:%d", articleID)),
 				),
 			)
-			
+
 			responseMsg := tgbotapi.NewMessage(message.Chat.ID, moderationText)
 			responseMsg.ParseMode = tgbotapi.ModeHTML
 			responseMsg.ReplyMarkup = &keyboard

@@ -13,16 +13,18 @@ import (
 )
 
 type Article struct {
-	Title       string
-	Link        string
-	Description string
-	TextContent string
-	ImageURL    string
+	Title           string
+	Link            string
+	Description     string
+	TextContent     string
+	ImageURL        string
+	PublicationTime *time.Time
 }
 
 type DiscoveredArticle struct {
-	Link   string
-	Source Source
+	Link    string
+	Source  Source
+	PubDate *time.Time
 }
 
 type Source struct {
@@ -51,17 +53,17 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-func (f *Fetcher) DiscoverArticles(sources []Source) ([]DiscoveredArticle, error) {
+func (f *Fetcher) DiscoverArticles(sources []Source, maxAgeHours int) ([]DiscoveredArticle, error) {
 	var discoveredArticles []DiscoveredArticle
 	for _, source := range sources {
-		var links []string
+		var articlesFromSource []DiscoveredArticle
 		var err error
 
 		switch source.Type {
 		case "rss":
-			links, err = f.fetchFromRSS(source.URL)
+			articlesFromSource, err = f.fetchFromRSS(source, maxAgeHours)
 		case "scrape":
-			links, err = f.fetchFromHomepage(source.URL, source.LinkSelector)
+			articlesFromSource, err = f.fetchFromHomepage(source)
 		default:
 			fmt.Printf("Warning: Unknown source type '%s' for URL %s\n", source.Type, source.URL)
 			continue
@@ -72,31 +74,41 @@ func (f *Fetcher) DiscoverArticles(sources []Source) ([]DiscoveredArticle, error
 			continue
 		}
 
-		for _, link := range links {
-			discoveredArticles = append(discoveredArticles, DiscoveredArticle{
-				Link:   link,
-				Source: source,
-			})
-		}
+		discoveredArticles = append(discoveredArticles, articlesFromSource...)
 	}
 
 	return discoveredArticles, nil
 }
 
-func (f *Fetcher) fetchFromRSS(url string) ([]string, error) {
-	feed, err := f.parser.ParseURL(url)
+func (f *Fetcher) fetchFromRSS(source Source, maxAgeHours int) ([]DiscoveredArticle, error) {
+	feed, err := f.parser.ParseURL(source.URL)
 	if err != nil {
 		return nil, err
 	}
-	var links []string
+	var discoveredArticles []DiscoveredArticle
+	now := time.Now()
+	maxAge := time.Duration(maxAgeHours) * time.Hour
+
 	for _, item := range feed.Items {
-		links = append(links, item.Link)
+		if item.PublishedParsed == nil {
+			continue
+		}
+
+		if now.Sub(*item.PublishedParsed) > maxAge {
+			continue
+		}
+
+		discoveredArticles = append(discoveredArticles, DiscoveredArticle{
+			Link:    item.Link,
+			Source:  source,
+			PubDate: item.PublishedParsed,
+		})
 	}
-	return links, nil
+	return discoveredArticles, nil
 }
 
-func (f *Fetcher) fetchFromHomepage(pageURL, linkSelector string) ([]string, error) {
-	res, err := http.Get(pageURL)
+func (f *Fetcher) fetchFromHomepage(source Source) ([]DiscoveredArticle, error) {
+	res, err := http.Get(source.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -107,22 +119,26 @@ func (f *Fetcher) fetchFromHomepage(pageURL, linkSelector string) ([]string, err
 		return nil, err
 	}
 
-	base, err := url.Parse(pageURL)
+	base, err := url.Parse(source.URL)
 	if err != nil {
 		return nil, err
 	}
 
-	var links []string
-	doc.Find(linkSelector).Each(func(i int, s *goquery.Selection) {
+	var discoveredArticles []DiscoveredArticle
+	doc.Find(source.LinkSelector).Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
 			u, err := url.Parse(href)
 			if err == nil {
-				links = append(links, base.ResolveReference(u).String())
+				discoveredArticles = append(discoveredArticles, DiscoveredArticle{
+					Link:    base.ResolveReference(u).String(),
+					Source:  source,
+					PubDate: nil,
+				})
 			}
 		}
 	})
-	return links, nil
+	return discoveredArticles, nil
 }
 
 func (f *Fetcher) ScrapeArticleDetails(link string) (*Article, error) {

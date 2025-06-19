@@ -35,17 +35,21 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 		log.Printf("Error getting sources from DB: %v", err)
 		return
 	}
+
+	b.configMutex.RLock()
+	postLimit := b.cfg.PostLimitPerRun
+	approvalEnabled := b.cfg.EnableApprovalSystem
+	maxAgeHours := b.cfg.RSSMaxAgeHours
+	b.configMutex.RUnlock()
+
 	log.Println("Discovering article links from configured sources...")
-	discoveredArticles, err := b.fetcher.DiscoverArticles(sources)
+	discoveredArticles, err := b.fetcher.DiscoverArticles(sources, maxAgeHours)
 	if err != nil {
 		log.Printf("Error discovering articles: %v", err)
 		return
 	}
 	log.Printf("Found %d total article links. Checking against %d known posts...", len(discoveredArticles), len(b.postedArticles))
-	b.configMutex.RLock()
-	postLimit := b.cfg.PostLimitPerRun
-	approvalEnabled := b.cfg.EnableApprovalSystem
-	b.configMutex.RUnlock()
+
 	postsCount := 0
 	for _, articleStub := range discoveredArticles {
 		if postsCount >= postLimit {
@@ -74,6 +78,8 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 			b.postedArticles[articleStub.Link] = true
 			continue
 		}
+		fullArticle.PublicationTime = articleStub.PubDate
+
 		summary, err := b.summarizer.Summarize(ctx, fullArticle.TextContent)
 		if err != nil {
 			log.Printf("Could not summarize article '%s': %v", fullArticle.Title, err)
@@ -159,6 +165,16 @@ func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary strin
 	}
 
 	currentDate := time.Now().Format("January 2, 2006")
+	publishDate := "N/A"
+	publishTime := "N/A"
+
+	if article.PublicationTime != nil {
+		// Asumsi bot berjalan di server dengan zona waktu lokal yang benar
+		// Jika ingin spesifik, gunakan loc, err := time.LoadLocation("Asia/Jakarta")
+		// lalu format dengan .In(loc)
+		publishDate = article.PublicationTime.Format("2 January 2006")
+		publishTime = article.PublicationTime.Format("15:04 WIB")
+	}
 
 	templateReplacer := strings.NewReplacer(
 		"{title}", article.Title,
@@ -168,6 +184,8 @@ func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary strin
 		"{topic_name}", topicName,
 		"{source_name}", sourceName,
 		"{date}", currentDate,
+		"{publish_date}", publishDate,
+		"{publish_time}", publishTime,
 	)
 
 	return templateReplacer.Replace(template)
@@ -181,13 +199,13 @@ func (b *TelegramBot) sendArticleToModeration(article *news_fetcher.Article, sum
 	if topicName == "" {
 		topicName = "General"
 	}
-	
+
 	pendingArticle := storage.PendingArticle{
-		Title:     article.Title,
-		Summary:   summary,
-		Link:      article.Link,
-		ImageURL:  article.ImageURL,
-		TopicName: topicName,
+		Title:      article.Title,
+		Summary:    summary,
+		Link:       article.Link,
+		ImageURL:   article.ImageURL,
+		TopicName:  topicName,
 		SourceName: sourceName,
 	}
 
@@ -204,7 +222,7 @@ func (b *TelegramBot) sendArticleToModeration(article *news_fetcher.Article, sum
 	b.configMutex.RUnlock()
 
 	caption := b.formatCaption(article, summary, source)
-	
+
 	moderationText := fmt.Sprintf("%s\n\n%s", b.localizer.GetMessage(lang, "approval_header"), caption)
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -218,7 +236,7 @@ func (b *TelegramBot) sendArticleToModeration(article *news_fetcher.Article, sum
 	msg := tgbotapi.NewMessage(approvalChatID, moderationText)
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = &keyboard
-	
+
 	if _, err := b.api.Send(msg); err != nil {
 		return fmt.Errorf("failed to send moderation notification: %w", err)
 	}

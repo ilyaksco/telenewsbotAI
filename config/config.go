@@ -25,6 +25,7 @@ type Config struct {
 	PostLimitPerRun         int    `envconfig:"POST_LIMIT_PER_RUN"         default:"5" key:"post_limit_per_run"`
 	EnableApprovalSystem    bool   `envconfig:"ENABLE_APPROVAL_SYSTEM" default:"false" key:"enable_approval_system"`
 	ApprovalChatID          int64  `envconfig:"APPROVAL_CHAT_ID" default:"0" key:"approval_chat_id"`
+	RSSMaxAgeHours          int    `envconfig:"RSS_MAX_AGE_HOURS" default:"24" key:"rss_max_age_hours"`
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -72,6 +73,7 @@ func LoadConfigFromDB(s *storage.Storage) (*Config, bool, error) {
 	superAdminID, _ := strconv.ParseInt(settings["super_admin_id"], 10, 64)
 	approvalSystem, _ := strconv.ParseBool(settings["enable_approval_system"])
 	approvalChatID, _ := strconv.ParseInt(settings["approval_chat_id"], 10, 64)
+	rssMaxAge, _ := strconv.Atoi(settings["rss_max_age_hours"])
 
 	return &Config{
 		TelegramBotToken:        settings["telegram_bot_token"],
@@ -87,6 +89,7 @@ func LoadConfigFromDB(s *storage.Storage) (*Config, bool, error) {
 		PostLimitPerRun:         postLimit,
 		EnableApprovalSystem:    approvalSystem,
 		ApprovalChatID:          approvalChatID,
+		RSSMaxAgeHours:          rssMaxAge,
 	}, true, nil
 }
 
@@ -105,6 +108,7 @@ func SaveConfigToDB(s *storage.Storage, cfg *Config) error {
 		"post_limit_per_run":        strconv.Itoa(cfg.PostLimitPerRun),
 		"enable_approval_system":    strconv.FormatBool(cfg.EnableApprovalSystem),
 		"approval_chat_id":          strconv.FormatInt(cfg.ApprovalChatID, 10),
+		"rss_max_age_hours":         strconv.Itoa(cfg.RSSMaxAgeHours),
 	}
 
 	for key, value := range settings {

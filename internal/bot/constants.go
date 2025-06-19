@@ -11,5 +11,6 @@ const (
 	StateAwaitingTopicSelection  = "awaiting_topic_selection"
 	StateAwaitingApprovalChatID  = "awaiting_approval_chat_id"
 	StateAwaitingArticleEdit     = "awaiting_article_edit"
+	StateAwaitingRSSMaxAge       = "awaiting_rss_max_age"
 	newsFetchingJobTag           = "news_fetching_job"
 )

@@ -36,6 +36,10 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingSchedule})
 		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_schedule")
 		b.api.Send(msg)
+	case "edit_rss_max_age":
+		b.setUserState(userID, &ConversationState{Step: StateAwaitingRSSMaxAge})
+		msg.Text = b.localizer.GetMessage(lang, "ask_for_rss_max_age")
+		b.api.Send(msg)
 	case "edit_gemini_model":
 		b.sendModelSelectionMenu(chatID, messageID)
 	case "edit_msg_template":
@@ -153,9 +157,10 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 	}
 
 	articleToPost := &news_fetcher.Article{
-		Title:    pendingArticle.Title,
-		Link:     pendingArticle.Link,
-		ImageURL: pendingArticle.ImageURL,
+		Title:           pendingArticle.Title,
+		Link:            pendingArticle.Link,
+		ImageURL:        pendingArticle.ImageURL,
+		PublicationTime: &pendingArticle.CreatedAt, // Approximation, as we don't store original pub time
 	}
 	source := news_fetcher.Source{
 		URL:       "https://" + pendingArticle.SourceName, // Reconstruct for formatting

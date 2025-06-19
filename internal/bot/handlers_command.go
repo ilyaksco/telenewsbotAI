@@ -66,7 +66,7 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	}
 	var builder strings.Builder
 	builder.WriteString(b.localizer.GetMessage(lang, "settings_title") + "\n\n")
-	displayOrder := []string{"super_admin_id", "telegram_chat_id", "ai_prompt", "post_limit_per_run", "schedule_interval_minutes", "gemini_model", "telegram_message_template", "default_language", "news_sources_file_path", "enable_approval_system", "approval_chat_id"}
+	displayOrder := []string{"super_admin_id", "telegram_chat_id", "ai_prompt", "post_limit_per_run", "schedule_interval_minutes", "rss_max_age_hours", "gemini_model", "telegram_message_template", "default_language", "news_sources_file_path", "enable_approval_system", "approval_chat_id"}
 	sensitiveKeys := map[string]bool{"telegram_bot_token": true, "gemini_api_key": true}
 
 	for _, key := range displayOrder {
@@ -79,6 +79,9 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 		}
 		if key == "approval_chat_id" && value == "0" {
 			value = "Not Set (Defaults to Superadmin)"
+		}
+		if key == "rss_max_age_hours" {
+			value = fmt.Sprintf("%s hours", value)
 		}
 		displayName := b.localizer.GetMessage(lang, "setting_name_"+key)
 		format := b.localizer.GetMessage(lang, "settings_format")
@@ -104,9 +107,10 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Schedule", "edit_schedule"),
-			tgbotapi.NewInlineKeyboardButtonData("Approval Chat ID", "edit_approval_chat_id"),
+			tgbotapi.NewInlineKeyboardButtonData("RSS Max Age", "edit_rss_max_age"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Approval Chat ID", "edit_approval_chat_id"),
 			tgbotapi.NewInlineKeyboardButtonData(approvalStatusText, "toggle_approval_system"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
