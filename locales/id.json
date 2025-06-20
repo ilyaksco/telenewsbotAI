@@ -1,6 +1,6 @@
 {
     "welcome_message": "Halo! Saya Bot Berita AI. Siap untuk menyajikan berita terbaru yang sudah dirangkum untuk Anda.",
-    "help_message": "Perintah yang tersedia:\n/start - Cek apakah bot aktif\n/help - Tampilkan pesan bantuan ini\n/settings - Tampilkan dan ubah setelan bot (Hanya Admin)\n/setadmin - Beri/cabut hak admin (Hanya Superadmin)\n/set_target - Atur tujuan pengiriman untuk sebuah kategori berita (Hanya Admin)\n/cancel - Batalkan operasi saat ini",
+    "help_message": "Perintah yang tersedia:\n/start - Cek apakah bot aktif\n/help - Tampilkan pesan bantuan ini\n/settings - Tampilkan dan ubah setelan bot (Hanya Admin)\n/setadmin - Beri/cabut hak admin (Hanya Superadmin)\n/set_target - Atur tujuan pengiriman untuk sebuah kategori berita (Hanya Admin)\n/fetch_now - Memicu proses pengambilan berita secara manual (Hanya Admin)\n/fetch_stop - Hentikan proses pengambilan berita saat ini (Hanya Admin)\n/cancel - Batalkan operasi saat ini",
     "settings_title": "<b>⚙️ Setelan Bot Saat Ini</b>",
     "settings_format": "<b>%s</b>: <code>%s</code>\n",
     "settings_error": "Terjadi kesalahan saat mengambil setelan. Silakan periksa log bot.",
@@ -14,6 +14,7 @@
     "btn_manage_sources": "Kelola Sumber Berita",
     "btn_cancel": "Batal",
     "btn_back_to_main_settings": "⬅️ Kembali ke Setelan",
+    "btn_refresh": "🔄 Segarkan",
     "ask_for_new_ai_prompt": "Silakan kirimkan Prompt AI yang baru.",
     "ask_for_new_post_limit": "Silakan kirimkan batas postingan yang baru (harus berupa angka).",
     "ask_for_new_gemini_model": "Silakan pilih model AI yang baru:",
@@ -75,5 +76,11 @@
     "delete_topic_title": "Pilih topik yang ingin dihapus. Topik yang masih digunakan oleh sumber berita tidak bisa dihapus.",
     "delete_topic_in_use": "Gagal! Topik ini masih digunakan oleh satu atau lebih sumber berita.",
     "delete_topic_success": "Topik berhasil dihapus!",
-    "btn_back_to_menu": "⬅️Kembali Ke menu"
+    "btn_back_to_menu": "⬅️Kembali Ke menu",
+    "fetch_now_started": "✅ Proses pengambilan berita manual telah dimulai. Anda akan dinotifikasi setelah selesai.",
+    "fetch_now_completed": "✅ Proses pengambilan berita manual telah selesai.",
+    "fetch_now_already_running": "⚠️ Proses pengambilan berita sedang berjalan. Harap tunggu hingga selesai.",
+    "fetch_stop_in_progress": "✅ Menghentikan proses pengambilan berita. Proses akan berhenti sesaat lagi.",
+    "fetch_stop_not_running": "ℹ️ Tidak ada proses pengambilan berita yang sedang berjalan.",
+    "fetch_stop_success": "✅ Proses pengambilan berita telah dihentikan."
 }

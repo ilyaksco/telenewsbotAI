@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strconv"
@@ -14,7 +15,8 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(message.Chat.ID, "")
 	cmd := message.Command()
 
-	protectedCommands := map[string]bool{"settings": true, "setadmin": true, "cancel": true}
+	// MODIFIED: Added fetch_now and fetch_stop
+	protectedCommands := map[string]bool{"settings": true, "setadmin": true, "cancel": true, "fetch_now": true, "fetch_stop": true}
 	if protectedCommands[cmd] && !b.isAdmin(message.From.ID) {
 		msg.Text = b.localizer.GetMessage(lang, "permission_denied")
 		b.api.Send(msg)
@@ -38,6 +40,12 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	case "set_target":
 		b.handleSetTargetCommand(message)
 		return
+	case "fetch_now":
+		b.handleFetchNowCommand(message)
+		return
+	case "fetch_stop": // ADDED
+		b.handleFetchStopCommand(message)
+		return
 	case "cancel":
 		b.handleCancelCommand(message)
 		return
@@ -46,6 +54,38 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	}
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("Failed to send command response: %v", err)
+	}
+}
+
+func (b *TelegramBot) handleFetchNowCommand(message *tgbotapi.Message) {
+	lang := b.getLang()
+	b.fetchingMutex.Lock()
+	if b.isFetching {
+		b.fetchingMutex.Unlock()
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_now_already_running"))
+		b.api.Send(msg)
+		return
+	}
+	b.fetchingMutex.Unlock()
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_now_started"))
+	b.api.Send(msg)
+	go b.fetchAndPostNews(context.Background(), message.Chat.ID)
+}
+
+// ADDED: New function to handle fetch_stop
+func (b *TelegramBot) handleFetchStopCommand(message *tgbotapi.Message) {
+	lang := b.getLang()
+	b.fetchingMutex.Lock()
+	defer b.fetchingMutex.Unlock()
+
+	if b.isFetching && b.cancelFunc != nil {
+		b.cancelFunc()
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_stop_in_progress"))
+		b.api.Send(msg)
+	} else {
+		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_stop_not_running"))
+		b.api.Send(msg)
 	}
 }
 
@@ -104,7 +144,6 @@ func (b *TelegramBot) handleSetTargetCommand(message *tgbotapi.Message) {
 	b.api.Send(msg)
 }
 
-// ... (sisa file sama persis dengan versi yang sudah berjalan baik)
 func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	lang := b.getLang()
 	settings, err := b.storage.GetAllSettings()
@@ -175,6 +214,9 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Manage Sources", "manage_sources"),
 			tgbotapi.NewInlineKeyboardButtonData("Manage Topics", "manage_topics"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_refresh"), "refresh_settings"),
 		),
 	)
 	msg.ReplyMarkup = &keyboard

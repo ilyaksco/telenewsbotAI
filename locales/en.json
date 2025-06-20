@@ -1,6 +1,6 @@
 {
     "welcome_message": "Hello! I am an AI News Bot. Ready to serve you the latest summarized news.",
-    "help_message": "Available commands:\n/start - Check if the bot is alive\n/help - Show this help message\n/settings - View and change bot settings (Admin Only)\n/setadmin - Grant/revoke admin privileges (Superadmin Only)\n/set_target - Set the posting destination for a news category (Admin Only)\n/cancel - Cancel the current operation",
+    "help_message": "Available commands:\n/start - Check if the bot is alive\n/help - Show this help message\n/settings - View and change bot settings (Admin Only)\n/setadmin - Grant/revoke admin privileges (Superadmin Only)\n/set_target - Set the posting destination for a news category (Admin Only)\n/fetch_now - Manually trigger the news fetching process (Admin Only)\n/fetch_stop - Stop the current news fetching process (Admin Only)\n/cancel - Cancel the current operation",
     "settings_title": "<b>⚙️ Current Bot Settings</b>",
     "settings_format": "<b>%s</b>: <code>%s</code>\n",
     "settings_error": "An error occurred while fetching settings. Please check the bot logs.",
@@ -14,6 +14,7 @@
     "btn_manage_sources": "Manage News Sources",
     "btn_cancel": "Cancel",
     "btn_back_to_main_settings": "⬅️ Back to Settings",
+    "btn_refresh": "🔄 Refresh",
     "ask_for_new_ai_prompt": "Please send the new AI Prompt.",
     "ask_for_new_post_limit": "Please send the new post limit (must be a number).",
     "ask_for_new_gemini_model": "Please select the new AI model:",
@@ -75,5 +76,11 @@
     "delete_topic_title": "Select a topic to delete. Topics currently in use by a news source cannot be deleted.",
     "delete_topic_in_use": "Failed! This topic is still in use by one or more news sources.",
     "delete_topic_success": "Topic deleted successfully!",
-    "btn_back_to_menu": "⬅️ Back to Menu"
+    "btn_back_to_menu": "⬅️ Back to Menu",
+    "fetch_now_started": "✅ Manual news fetching process has been started. I will notify you when it's complete.",
+    "fetch_now_completed": "✅ Manual news fetching process completed.",
+    "fetch_now_already_running": "⚠️ A fetching process is already running. Please wait for it to complete.",
+    "fetch_stop_in_progress": "✅ Stopping the current news fetching process. It will stop shortly.",
+    "fetch_stop_not_running": "ℹ️ No news fetching process is currently running.",
+    "fetch_stop_success": "✅ The news fetching process has been stopped."
 }

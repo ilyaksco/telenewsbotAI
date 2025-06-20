@@ -79,6 +79,12 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		successMsg := tgbotapi.NewEditMessageText(chatID, messageID, b.localizer.GetMessage(lang, "setting_updated_success"))
 		b.api.Send(successMsg)
 
+	case "refresh_settings":
+		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
+		b.api.Request(deleteConfig)
+		b.handleSettingsCommand(callback.Message)
+		callbackAns.Text = "Settings Refreshed"
+
 	// Source Management Callbacks
 	case "manage_sources":
 		b.sendSourcesMenu(chatID, messageID)
@@ -189,6 +195,8 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 	pendingArticle, err := b.storage.GetPendingArticle(articleID)
 	if err != nil {
 		log.Printf("Failed to get pending article %d: %v", articleID, err)
+		callbackAns := tgbotapi.NewCallback(callback.ID, "This article has already been processed.")
+		b.api.Request(callbackAns)
 		return
 	}
 
@@ -232,6 +240,7 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 	approvedText := fmt.Sprintf("%s\n\n%s", callback.Message.Text, fmt.Sprintf(b.localizer.GetMessage(lang, "approval_action_approved"), callback.From.FirstName))
 	editMsg := tgbotapi.NewEditMessageText(callback.Message.Chat.ID, callback.Message.MessageID, approvedText)
 	editMsg.ParseMode = tgbotapi.ModeHTML
+	editMsg.ReplyMarkup = nil
 	b.api.Send(editMsg)
 }
 
@@ -242,6 +251,8 @@ func (b *TelegramBot) handleRejectArticle(callback *tgbotapi.CallbackQuery) {
 	pendingArticle, err := b.storage.GetPendingArticle(articleID)
 	if err != nil {
 		log.Printf("Failed to get pending article %d for rejection: %v", articleID, err)
+		callbackAns := tgbotapi.NewCallback(callback.ID, "This article has already been processed.")
+		b.api.Request(callbackAns)
 		return
 	}
 
@@ -253,15 +264,21 @@ func (b *TelegramBot) handleRejectArticle(callback *tgbotapi.CallbackQuery) {
 	rejectedText := fmt.Sprintf("%s\n\n%s", callback.Message.Text, fmt.Sprintf(b.localizer.GetMessage(lang, "approval_action_rejected"), callback.From.FirstName))
 	editMsg := tgbotapi.NewEditMessageText(callback.Message.Chat.ID, callback.Message.MessageID, rejectedText)
 	editMsg.ParseMode = tgbotapi.ModeHTML
+	editMsg.ReplyMarkup = nil
 	b.api.Send(editMsg)
 }
 
 func (b *TelegramBot) handleEditArticle(callback *tgbotapi.CallbackQuery) {
 	lang := b.getLang()
 	articleID, _ := strconv.ParseInt(strings.Split(callback.Data, ":")[1], 10, 64)
+
+	// MODIFIED: Store original message details including text
 	b.setUserState(callback.From.ID, &ConversationState{
-		Step:             StateAwaitingArticleEdit,
-		PendingArticleID: articleID,
+		Step:                StateAwaitingArticleEdit,
+		PendingArticleID:    articleID,
+		OriginalMessageID:   callback.Message.MessageID,
+		OriginalChatID:      callback.Message.Chat.ID,
+		OriginalMessageText: callback.Message.Text,
 	})
 
 	msg := tgbotapi.NewMessage(callback.Message.Chat.ID, b.localizer.GetMessage(lang, "ask_for_edited_summary"))

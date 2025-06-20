@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -29,7 +30,49 @@ func (b *TelegramBot) scheduleNewsFetching() {
 	b.scheduler.AddJob(newsFetchingJobTag, jobInterval, b.newsFetchingJob)
 }
 
-func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
+func (b *TelegramBot) fetchAndPostNews(parentCtx context.Context, notifyChatID ...int64) {
+	b.fetchingMutex.Lock()
+	if b.isFetching {
+		log.Println("Fetch process trigger ignored: another process is already running.")
+		b.fetchingMutex.Unlock()
+		if len(notifyChatID) > 0 {
+			lang := b.getLang()
+			msg := tgbotapi.NewMessage(notifyChatID[0], b.localizer.GetMessage(lang, "fetch_now_already_running"))
+			b.api.Send(msg)
+		}
+		return
+	}
+
+	ctx, cancel := context.WithCancel(parentCtx)
+	b.isFetching = true
+	b.cancelFunc = cancel
+	b.fetchingMutex.Unlock()
+
+	defer func() {
+		b.fetchingMutex.Lock()
+		b.isFetching = false
+		b.cancelFunc = nil
+		b.fetchingMutex.Unlock()
+
+		lang := b.getLang()
+		// Check if the context was cancelled
+		if errors.Is(ctx.Err(), context.Canceled) {
+			log.Println("News fetching process was stopped by user.")
+			if len(notifyChatID) > 0 {
+				msg := tgbotapi.NewMessage(notifyChatID[0], b.localizer.GetMessage(lang, "fetch_stop_success"))
+				b.api.Send(msg)
+			}
+		} else {
+			log.Println("News fetching process finished.")
+			if len(notifyChatID) > 0 {
+				msg := tgbotapi.NewMessage(notifyChatID[0], b.localizer.GetMessage(lang, "fetch_now_completed"))
+				b.api.Send(msg)
+			}
+		}
+	}()
+
+	log.Println("Starting news fetching process...")
+
 	sources, err := b.storage.GetNewsSources()
 	if err != nil {
 		log.Printf("Error getting sources from DB: %v", err)
@@ -52,6 +95,13 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 
 	postsCount := 0
 	for _, articleStub := range discoveredArticles {
+		select {
+		case <-ctx.Done():
+			return // Exit if context is cancelled
+		default:
+			// Continue
+		}
+
 		if postsCount >= postLimit {
 			log.Printf("Post limit of %d reached for this run. Stopping.", postLimit)
 			break
@@ -82,7 +132,9 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 
 		summary, err := b.summarizer.Summarize(ctx, fullArticle.TextContent)
 		if err != nil {
-			log.Printf("Could not summarize article '%s': %v", fullArticle.Title, err)
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("Could not summarize article '%s': %v", fullArticle.Title, err)
+			}
 			continue
 		}
 
@@ -106,7 +158,14 @@ func (b *TelegramBot) fetchAndPostNews(ctx context.Context) {
 
 		b.postedArticles[fullArticle.Link] = true
 		postsCount++
-		time.Sleep(5 * time.Second)
+
+		// Sleep with context check
+		select {
+		case <-time.After(5 * time.Second):
+			// Continue
+		case <-ctx.Done():
+			return // Exit if context is cancelled during sleep
+		}
 	}
 }
 

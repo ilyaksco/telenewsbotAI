@@ -16,10 +16,13 @@ import (
 )
 
 type ConversationState struct {
-	Step             string
-	PendingSource    news_fetcher.Source
-	PendingArticleID int64
-	PendingTopicName string
+	Step                string
+	PendingSource       news_fetcher.Source
+	PendingArticleID    int64
+	PendingTopicName    string
+	OriginalMessageID   int
+	OriginalChatID      int64
+	OriginalMessageText string // ADDED: To store the original message text
 }
 
 type TelegramBot struct {
@@ -35,6 +38,9 @@ type TelegramBot struct {
 	userStates     map[int64]*ConversationState
 	stateMutex     sync.Mutex
 	configMutex    sync.RWMutex
+	isFetching     bool
+	fetchingMutex  sync.Mutex
+	cancelFunc     context.CancelFunc
 }
 
 func NewBot(

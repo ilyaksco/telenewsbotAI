@@ -3,8 +3,8 @@ package bot
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"news-bot/internal/news_fetcher"
+	"strconv"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -21,14 +21,13 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 		if message.ForwardFromChat == nil {
 			msg.Text = b.localizer.GetMessage(lang, "set_target_not_a_forward")
 			b.api.Send(msg)
-			return // Tetap dalam state yang sama, menunggu forward yang benar
+			return
 		}
 		chatID := message.ForwardFromChat.ID
 		messageID := message.ForwardFromMessageID
 
 		topic, err := b.storage.GetTopicByName(state.PendingTopicName)
 		if err != nil {
-			// Seharusnya tidak terjadi karena sudah dicek di command handler
 			log.Printf("Error getting topic by name in stateful handler: %v", err)
 			b.clearUserState(userID)
 			return
@@ -126,10 +125,25 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 			log.Printf("Failed to update summary for pending article %d: %v", articleID, err)
 			msg.Text = "Failed to update summary."
 		} else {
-			b.clearUserState(userID)
 			log.Printf("Summary for pending article %d updated by user %d.", articleID, userID)
 
-			pendingArticle, _ := b.storage.GetPendingArticle(articleID)
+			if state.OriginalMessageID != 0 {
+				disableEdit := tgbotapi.NewEditMessageText(state.OriginalChatID, state.OriginalMessageID, state.OriginalMessageText)
+				disableEdit.ReplyMarkup = nil
+				b.api.Send(disableEdit)
+			}
+
+			// MODIFIED: Handle the error from GetPendingArticle
+			pendingArticle, err := b.storage.GetPendingArticle(articleID)
+			if err != nil {
+				log.Printf("Could not get pending article %d after update (it may have been processed): %v", articleID, err)
+				msg.Text = "Could not process edit. The article may have already been approved or rejected."
+				b.clearUserState(userID)
+				// The break is sufficient, the message will be sent at the end of the function.
+				break
+			}
+
+			// This code below will only run if GetPendingArticle is successful
 			articleToFormat := &news_fetcher.Article{Title: pendingArticle.Title, Link: pendingArticle.Link}
 			sourceToFormat := news_fetcher.Source{URL: "https://" + pendingArticle.SourceName, TopicName: pendingArticle.TopicName}
 
@@ -144,10 +158,14 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message, state *Co
 				),
 			)
 
+			b.api.Request(tgbotapi.NewDeleteMessage(message.Chat.ID, message.MessageID))
+
 			responseMsg := tgbotapi.NewMessage(message.Chat.ID, moderationText)
 			responseMsg.ParseMode = tgbotapi.ModeHTML
 			responseMsg.ReplyMarkup = &keyboard
 			b.api.Send(responseMsg)
+
+			b.clearUserState(userID)
 		}
 
 	case StateAwaitingSourceURL:
