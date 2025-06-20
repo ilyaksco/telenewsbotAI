@@ -9,7 +9,7 @@ import (
 )
 
 func (b *TelegramBot) sendSuccessAndShowSettings(originalMessage *tgbotapi.Message) {
-	lang := b.getLang()
+	lang := "en"
 	successMsg := tgbotapi.NewMessage(originalMessage.Chat.ID, b.localizer.GetMessage(lang, "setting_updated_success"))
 	if _, err := b.api.Send(successMsg); err != nil {
 		log.Printf("Failed to send success message: %v", err)
@@ -18,16 +18,10 @@ func (b *TelegramBot) sendSuccessAndShowSettings(originalMessage *tgbotapi.Messa
 }
 
 func (b *TelegramBot) sendDeleteConfirmation(chatID int64, messageID int, sourceID int64) {
-	lang := b.getLang()
-	sources, _ := b.storage.GetNewsSources()
-	var sourceURL string
-	for _, s := range sources {
-		if s.ID == sourceID {
-			sourceURL = s.URL
-			break
-		}
-	}
-	text := fmt.Sprintf(b.localizer.GetMessage(lang, "confirm_delete_prompt"), sourceURL)
+	lang := "en"
+	// We can't easily get the URL here without another DB call, so we make the prompt generic.
+	// A better way would be to pass the URL in the callback data if needed.
+	text := fmt.Sprintf(b.localizer.GetMessage(lang, "confirm_delete_prompt"), fmt.Sprintf("Source ID: %d", sourceID))
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_yes_delete"), fmt.Sprintf("execute_delete_source:%d", sourceID)), tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_no_cancel"), "delete_source_menu")))
 	msg := tgbotapi.NewEditMessageText(chatID, messageID, text)
 	msg.ParseMode = tgbotapi.ModeHTML
@@ -36,7 +30,7 @@ func (b *TelegramBot) sendDeleteConfirmation(chatID int64, messageID int, source
 }
 
 func (b *TelegramBot) sendSourcesMenu(chatID int64, messageID int) {
-	lang := b.getLang()
+	lang := "en"
 	text := b.localizer.GetMessage(lang, "sources_menu_title")
 	sourcesKeyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_view_sources"), "view_sources"), tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_add_source"), "add_source")), tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_delete_source"), "delete_source_menu")), tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_back_to_main_settings"), "back_to_settings")))
 	editMsg := tgbotapi.NewEditMessageText(chatID, messageID, text)
@@ -46,7 +40,7 @@ func (b *TelegramBot) sendSourcesMenu(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) handleAddSource(chatID int64, messageID int) {
-	lang := b.getLang()
+	lang := "en"
 	text := b.localizer.GetMessage(lang, "ask_source_type")
 	typeKeyboard := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_source_type_rss"), "chose_source_type:rss"), tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_source_type_scrape"), "chose_source_type:scrape")), tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_cancel"), "manage_sources")))
 	editMsg := tgbotapi.NewEditMessageText(chatID, messageID, text)
@@ -55,10 +49,10 @@ func (b *TelegramBot) handleAddSource(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) handleDeleteSourceMenu(chatID int64, messageID int) {
-	lang := b.getLang()
-	sources, err := b.storage.GetNewsSources()
+	lang := "en"
+	sources, err := b.storage.GetNewsSourcesForChat(chatID)
 	if err != nil {
-		log.Printf("Failed to get sources for deletion menu: %v", err)
+		log.Printf("Failed to get sources for deletion menu for chat %d: %v", chatID, err)
 		return
 	}
 	text := b.localizer.GetMessage(lang, "delete_source_title")
@@ -80,18 +74,15 @@ func (b *TelegramBot) handleDeleteSourceMenu(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) sendModelSelectionMenu(chatID int64, messageID int) {
-	lang := b.getLang()
+	lang := "en"
 	text := b.localizer.GetMessage(lang, "ask_for_new_gemini_model")
 
 	availableModels := []struct {
 		DisplayName string
 		InternalID  string
 	}{
-		{DisplayName: "Gemini 1.5 Flash Latest", InternalID: "gemini-1.5-flash-8b-latest"},
-		{DisplayName: "Gemini 1.5 Flash", InternalID: "gemini-1.5-flash"},
-		{DisplayName: "Gemini 2.0 Flash Lite", InternalID: "gemini-2.0-flash-lite"},
-		{DisplayName: "Gemini 2.0 Flash", InternalID: "gemini-2.0-flash"},
-		{DisplayName: "Gemini 2.5 Flash 0520", InternalID: "gemini-2.5-flash-preview-05-20"},
+		{"Gemini 1.5 Flash", "gemini-1.5-flash"},
+		{"Gemini 1.0 Pro", "gemini-1.0-pro"},
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, model := range availableModels {
@@ -109,10 +100,10 @@ func (b *TelegramBot) sendModelSelectionMenu(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) handleViewSources(chatID int64, messageID int) {
-	lang := b.getLang()
-	sources, err := b.storage.GetNewsSources()
+	lang := "en"
+	sources, err := b.storage.GetNewsSourcesForChat(chatID)
 	if err != nil {
-		log.Printf("Failed to get sources for viewing: %v", err)
+		log.Printf("Failed to get sources for viewing for chat %d: %v", chatID, err)
 		return
 	}
 	var builder strings.Builder
@@ -170,10 +161,10 @@ func (b *TelegramBot) sendTopicsMenu(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) sendDeleteTopicMenu(chatID int64, messageID int) {
-	lang := b.getLang()
-	topics, err := b.storage.GetTopics()
+	lang := "en"
+	topics, err := b.storage.GetTopicsForChat(chatID)
 	if err != nil {
-		log.Printf("Failed to get topics for deletion: %v", err)
+		log.Printf("Failed to get topics for deletion for chat %d: %v", chatID, err)
 		return
 	}
 
@@ -195,11 +186,10 @@ func (b *TelegramBot) sendDeleteTopicMenu(chatID int64, messageID int) {
 	}
 }
 
-
 func (b *TelegramBot) handleViewTopicsList(chatID int64, messageID int) {
-	topics, err := b.storage.GetTopics()
+	topics, err := b.storage.GetTopicsForChat(chatID)
 	if err != nil {
-		log.Printf("Failed to get topics for viewing: %v", err)
+		log.Printf("Failed to get topics for viewing for chat %d: %v", chatID, err)
 		return
 	}
 
@@ -225,7 +215,7 @@ func (b *TelegramBot) handleViewTopicsList(chatID int64, messageID int) {
 }
 
 func (b *TelegramBot) sendTopicSelectionMenu(chatID int64, messageID int, userID int64) {
-	topics, err := b.storage.GetTopics()
+	topics, err := b.storage.GetTopicsForChat(chatID)
 	if err != nil || len(topics) == 0 {
 		text := "No topics available. Please add a topic first via /settings -> Manage Topics."
 		var msg tgbotapi.Chattable

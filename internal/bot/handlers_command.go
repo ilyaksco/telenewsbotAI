@@ -11,13 +11,27 @@ import (
 )
 
 func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
-	msg := tgbotapi.NewMessage(message.Chat.ID, "")
+	chatID := message.Chat.ID
+	userID := message.From.ID
+	
+	if err := b.ensureChatIsConfigured(chatID); err != nil {
+		log.Printf("Critical error ensuring chat config for %d: %v", chatID, err)
+		return
+	}
+
+	lang := b.getLangForChat(chatID)
+	msg := tgbotapi.NewMessage(chatID, "")
 	cmd := message.Command()
 
-	// MODIFIED: Added fetch_now and fetch_stop
-	protectedCommands := map[string]bool{"settings": true, "setadmin": true, "cancel": true, "fetch_now": true, "fetch_stop": true}
-	if protectedCommands[cmd] && !b.isAdmin(message.From.ID) {
+	protectedCommands := map[string]bool{"settings": true, "set_target": true, "cancel": true, "lang": true}
+	if protectedCommands[cmd] && !b.isChatAdmin(chatID, userID) {
+		msg.Text = b.localizer.GetMessage(lang, "permission_denied")
+		b.api.Send(msg)
+		return
+	}
+
+	superAdminCommands := map[string]bool{"fetch_now": true, "fetch_stop": true}
+	if superAdminCommands[cmd] && !b.isSuperAdmin(userID) {
 		msg.Text = b.localizer.GetMessage(lang, "permission_denied")
 		b.api.Send(msg)
 		return
@@ -25,17 +39,39 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 
 	switch cmd {
 	case "start":
-		msg.Text = b.localizer.GetMessage(lang, "welcome_message")
+		// MODIFIED: This is now the main entry point for setting up a chat.
+		isConfigured, err := b.storage.IsChatConfigured(chatID)
+		if err != nil {
+			log.Printf("Error checking if chat %d is configured on /start: %v", chatID, err)
+			return
+		}
+
+		if !isConfigured {
+			log.Printf("New chat %d started conversation. Creating default configuration...", chatID)
+			if err := b.storage.CreateDefaultChatConfig(chatID, b.defaultChatCfg); err != nil {
+				log.Printf("Failed to create default config for new chat %d: %v", chatID, err)
+				return
+			}
+		}
+		// Now that config is guaranteed, get the correct language.
+		lang = b.getLangForChat(chatID)
+		welcomeMsg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "welcome_message"))
+		b.api.Send(welcomeMsg)
+
+		// Also send the help message to guide new users.
+		helpMsg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "help_message_user"))
+		helpMsg.ParseMode = tgbotapi.ModeHTML
+		b.api.Send(helpMsg)
+		return // Return here as we've sent our messages.
+
 	case "help":
-		msg.Text = b.localizer.GetMessage(lang, "help_message")
+		msg.Text = b.localizer.GetMessage(lang, "help_message_user")
+		msg.ParseMode = tgbotapi.ModeHTML
+	case "lang":
+		b.handleLangCommand(message)
+		return
 	case "settings":
 		b.handleSettingsCommand(message)
-		return
-	case "analyzelinks":
-		b.handleAnalyzeLinksCommand(message)
-		return
-	case "setadmin":
-		b.handleSetAdminCommand(message)
 		return
 	case "set_target":
 		b.handleSetTargetCommand(message)
@@ -43,39 +79,58 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	case "fetch_now":
 		b.handleFetchNowCommand(message)
 		return
-	case "fetch_stop": // ADDED
+	case "fetch_stop":
 		b.handleFetchStopCommand(message)
 		return
 	case "cancel":
 		b.handleCancelCommand(message)
 		return
+	case "analyzelinks":
+		if !b.isSuperAdmin(userID) {
+			return
+		}
+		b.handleAnalyzeLinksCommand(message)
+		return
 	default:
 		return
 	}
-	if _, err := b.api.Send(msg); err != nil {
-		log.Printf("Failed to send command response: %v", err)
+
+	if msg.Text != "" {
+		if _, err := b.api.Send(msg); err != nil {
+			log.Printf("Failed to send command response for chat %d: %v", chatID, err)
+		}
 	}
+}
+
+
+func (b *TelegramBot) handleLangCommand(message *tgbotapi.Message) {
+	chatID := message.Chat.ID
+	text := "Please choose your preferred language:"
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Bahasa Indonesia 🇮🇩", "set_lang:id"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("English 🇬🇧", "set_lang:en"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = &keyboard
+	b.api.Send(msg)
 }
 
 func (b *TelegramBot) handleFetchNowCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
-	b.fetchingMutex.Lock()
-	if b.isFetching {
-		b.fetchingMutex.Unlock()
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_now_already_running"))
-		b.api.Send(msg)
-		return
-	}
-	b.fetchingMutex.Unlock()
-
+	// MODIFIED: Get language dynamically and use it.
+	lang := b.getLangForChat(message.Chat.ID)
+	go b.fetchAndPostNews(context.Background(), message.Chat.ID)
 	msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_now_started"))
 	b.api.Send(msg)
-	go b.fetchAndPostNews(context.Background(), message.Chat.ID)
 }
 
-// ADDED: New function to handle fetch_stop
 func (b *TelegramBot) handleFetchStopCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
+	// MODIFIED: Get language dynamically and use it.
+	lang := b.getLangForChat(message.Chat.ID)
 	b.fetchingMutex.Lock()
 	defer b.fetchingMutex.Unlock()
 
@@ -90,130 +145,122 @@ func (b *TelegramBot) handleFetchStopCommand(message *tgbotapi.Message) {
 }
 
 func (b *TelegramBot) handleSetTargetCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
-	if !b.isAdmin(message.From.ID) {
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "permission_denied"))
-		b.api.Send(msg)
-		return
-	}
+	chatID := message.Chat.ID
+	lang := b.getLangForChat(chatID)
 
 	args := message.CommandArguments()
 	parts := strings.Fields(args)
 
 	if len(parts) != 3 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "set_target_usage"))
+		msg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "set_target_usage"))
 		msg.ParseMode = tgbotapi.ModeHTML
 		b.api.Send(msg)
 		return
 	}
 
 	topicName := parts[0]
-	chatIDStr := parts[1]
+	destChatIDStr := parts[1]
 	messageIDStr := parts[2]
 
-	chatID, errChat := strconv.ParseInt(chatIDStr, 10, 64)
+	destChatID, errChat := strconv.ParseInt(destChatIDStr, 10, 64)
 	messageID, errMsg := strconv.ParseInt(messageIDStr, 10, 64)
 
 	if errChat != nil || errMsg != nil {
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "set_target_invalid_id"))
+		msg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "set_target_invalid_id"))
 		msg.ParseMode = tgbotapi.ModeHTML
 		b.api.Send(msg)
 		return
 	}
 
-	topic, err := b.storage.GetTopicByName(topicName)
+	topic, err := b.storage.GetTopicByName(chatID, topicName)
 	if err != nil {
 		msgText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_topic_not_found"), topicName)
-		msg := tgbotapi.NewMessage(message.Chat.ID, msgText)
+		msg := tgbotapi.NewMessage(chatID, msgText)
 		msg.ParseMode = tgbotapi.ModeHTML
 		b.api.Send(msg)
 		return
 	}
 
-	err = b.storage.UpdateTopicDestination(topic.ID, chatID, messageID)
+	err = b.storage.UpdateTopicDestination(topic.ID, chatID, destChatID, messageID)
 	if err != nil {
-		log.Printf("Failed to update topic destination: %v", err)
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Error saving destination.")
+		log.Printf("Failed to update topic destination for chat %d: %v", chatID, err)
+		msg := tgbotapi.NewMessage(chatID, "Error saving destination.")
 		b.api.Send(msg)
 		return
 	}
 
-	successText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_success"), topicName, chatID, messageID)
-	msg := tgbotapi.NewMessage(message.Chat.ID, successText)
+	successText := fmt.Sprintf(b.localizer.GetMessage(lang, "set_target_success"), topicName, destChatID, messageID)
+	msg := tgbotapi.NewMessage(chatID, successText)
 	msg.ParseMode = tgbotapi.ModeHTML
 	b.api.Send(msg)
 }
 
 func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
-	settings, err := b.storage.GetAllSettings()
+	chatID := message.Chat.ID
+	lang := b.getLangForChat(chatID)
+
+	cfg, err := b.storage.GetChatConfig(chatID)
 	if err != nil {
-		log.Printf("Could not get settings for display: %v", err)
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "settings_error"))
-		if _, err_send := b.api.Send(msg); err_send != nil {
-			log.Printf("Failed to send settings error message: %v", err_send)
-		}
+		log.Printf("Could not get settings for chat %d: %v", chatID, err)
+		msg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "settings_error"))
+		b.api.Send(msg)
 		return
 	}
-	if len(settings) == 0 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "settings_empty"))
-		if _, err_send := b.api.Send(msg); err_send != nil {
-			log.Printf("Failed to send settings empty message: %v", err_send)
-		}
-		return
-	}
+
 	var builder strings.Builder
 	builder.WriteString(b.localizer.GetMessage(lang, "settings_title") + "\n\n")
-	displayOrder := []string{"super_admin_id", "telegram_chat_id", "ai_prompt", "post_limit_per_run", "schedule_interval_minutes", "rss_max_age_hours", "gemini_model", "telegram_message_template", "default_language", "news_sources_file_path", "enable_approval_system", "approval_chat_id"}
-	sensitiveKeys := map[string]bool{"telegram_bot_token": true, "gemini_api_key": true}
 
-	for _, key := range displayOrder {
-		value, ok := settings[key]
-		if !ok {
-			continue
-		}
-		if sensitiveKeys[key] {
-			value = "********"
-		}
-		if key == "approval_chat_id" && value == "0" {
-			value = "Not Set (Defaults to Superadmin)"
-		}
-		if key == "rss_max_age_hours" {
-			value = fmt.Sprintf("%s hours", value)
-		}
-		displayName := b.localizer.GetMessage(lang, "setting_name_"+key)
-		format := b.localizer.GetMessage(lang, "settings_format")
-		builder.WriteString(fmt.Sprintf(format, displayName, value))
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_ai_prompt"), cfg.AiPrompt))
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_gemini_model"), cfg.GeminiModel))
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_post_limit_per_run"), strconv.Itoa(cfg.PostLimitPerRun)))
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_rss_max_age_hours"), fmt.Sprintf("%d hours", cfg.RSSMaxAgeHours)))
+
+	approvalStatus := "Disabled"
+	if cfg.EnableApprovalSystem {
+		approvalStatus = "Enabled"
 	}
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_enable_approval_system"), approvalStatus))
+
+	approvalChat := "Not Set (Defaults to this chat)"
+	if cfg.ApprovalChatID != 0 {
+		approvalChat = strconv.FormatInt(cfg.ApprovalChatID, 10)
+	}
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_approval_chat_id"), approvalChat))
+
+	templateStatus := "Default"
+	if cfg.TelegramMessageTemplate != b.defaultChatCfg.TelegramMessageTemplate {
+		templateStatus = "Custom"
+	}
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_telegram_message_template"), templateStatus))
+
 	builder.WriteString(b.localizer.GetMessage(lang, "settings_edit_prompt"))
-	msg := tgbotapi.NewMessage(message.Chat.ID, builder.String())
+	msg := tgbotapi.NewMessage(chatID, builder.String())
 	msg.ParseMode = tgbotapi.ModeHTML
 
 	approvalStatusText := "Enable Approval"
-	if b.cfg.EnableApprovalSystem {
+	if cfg.EnableApprovalSystem {
 		approvalStatusText = "Disable Approval"
 	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("AI Prompt", "edit_ai_prompt"),
-			tgbotapi.NewInlineKeyboardButtonData("Post Limit", "edit_post_limit"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_ai_prompt"), "edit_ai_prompt"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_post_limit"), "edit_post_limit"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("AI Model", "edit_gemini_model"),
-			tgbotapi.NewInlineKeyboardButtonData("Msg Template", "edit_msg_template"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_gemini_model"), "edit_gemini_model"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_msg_template"), "edit_msg_template"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Schedule", "edit_schedule"),
-			tgbotapi.NewInlineKeyboardButtonData("RSS Max Age", "edit_rss_max_age"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_rss_max_age"), "edit_rss_max_age"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Approval Chat ID", "edit_approval_chat_id"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_approval_chat_id"), "edit_approval_chat_id"),
 			tgbotapi.NewInlineKeyboardButtonData(approvalStatusText, "toggle_approval_system"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Manage Sources", "manage_sources"),
-			tgbotapi.NewInlineKeyboardButtonData("Manage Topics", "manage_topics"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_manage_sources"), "manage_sources"),
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_manage_topics"), "manage_topics"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_refresh"), "refresh_settings"),
@@ -225,62 +272,16 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	}
 }
 
-func (b *TelegramBot) handleSetAdminCommand(message *tgbotapi.Message) {
-	lang := b.getLang()
-	b.configMutex.RLock()
-	superAdminID := b.cfg.SuperAdminID
-	b.configMutex.RUnlock()
-	msg := tgbotapi.NewMessage(message.Chat.ID, "")
-	if message.From.ID != superAdminID {
-		msg.Text = b.localizer.GetMessage(lang, "permission_denied")
-		b.api.Send(msg)
-		return
-	}
-	args := message.CommandArguments()
-	parts := strings.Fields(args)
-	if len(parts) != 2 {
-		msg.Text = b.localizer.GetMessage(lang, "setadmin_usage")
-		b.api.Send(msg)
-		return
-	}
-	targetID, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		msg.Text = b.localizer.GetMessage(lang, "setadmin_usage")
-		b.api.Send(msg)
-		return
-	}
-	if targetID == superAdminID {
-		msg.Text = b.localizer.GetMessage(lang, "setadmin_superadmin_fail")
-		b.api.Send(msg)
-		return
-	}
-	isAdmin, err := strconv.ParseBool(parts[1])
-	if err != nil {
-		msg.Text = b.localizer.GetMessage(lang, "setadmin_usage")
-		b.api.Send(msg)
-		return
-	}
-	if err := b.storage.SetUserAdmin(targetID, isAdmin); err != nil {
-		log.Printf("Failed to set admin status for user %d: %v", targetID, err)
-		return
-	}
-	msg.Text = fmt.Sprintf(b.localizer.GetMessage(lang, "setadmin_success"), targetID)
-	b.api.Send(msg)
-}
-
 func (b *TelegramBot) handleCancelCommand(message *tgbotapi.Message) {
 	userID := message.From.ID
+	lang := b.getLangForChat(message.Chat.ID)
 	b.stateMutex.Lock()
-	_, inState := b.userStates[userID]
-	if inState {
+	if _, inState := b.userStates[userID]; inState {
 		delete(b.userStates, userID)
-	}
-	b.stateMutex.Unlock()
-	if inState {
-		lang := b.getLang()
 		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "setting_update_cancelled"))
 		if _, err := b.api.Send(msg); err != nil {
 			log.Printf("Failed to send cancel confirmation: %v", err)
 		}
 	}
+	b.stateMutex.Unlock()
 }

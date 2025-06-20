@@ -29,6 +29,7 @@ type DiscoveredArticle struct {
 
 type Source struct {
 	ID                int64  `json:"id"`
+	ChatID            int64  `json:"chat_id"` // ADDED
 	Type              string `json:"type"`
 	URL               string `json:"url"`
 	LinkSelector      string `json:"link_selector,omitempty"`
@@ -92,18 +93,23 @@ func (f *Fetcher) fetchFromRSS(source Source, maxAgeHours int) ([]DiscoveredArti
 	maxAge := time.Duration(maxAgeHours) * time.Hour
 
 	for _, item := range feed.Items {
-		if item.PublishedParsed == nil {
-			continue
+		var pubDate time.Time
+		if item.PublishedParsed != nil {
+			pubDate = *item.PublishedParsed
+		} else if item.UpdatedParsed != nil {
+			pubDate = *item.UpdatedParsed
+		} else {
+			continue // Skip if no date is available
 		}
 
-		if now.Sub(*item.PublishedParsed) > maxAge {
+		if now.Sub(pubDate) > maxAge {
 			continue
 		}
 
 		discoveredArticles = append(discoveredArticles, DiscoveredArticle{
 			Link:    item.Link,
 			Source:  source,
-			PubDate: item.PublishedParsed,
+			PubDate: &pubDate,
 		})
 	}
 	return discoveredArticles, nil

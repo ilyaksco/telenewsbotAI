@@ -22,85 +22,92 @@ type ConversationState struct {
 	PendingTopicName    string
 	OriginalMessageID   int
 	OriginalChatID      int64
-	OriginalMessageText string // ADDED: To store the original message text
+	OriginalMessageText string
 }
 
 type TelegramBot struct {
 	api            *tgbotapi.BotAPI
-	cfg            *config.Config
+	globalCfg      *config.GlobalConfig
+	defaultChatCfg *config.Config
 	localizer      *localization.Localizer
 	fetcher        *news_fetcher.Fetcher
 	scheduler      *scheduler.Scheduler
-	summarizer     *ai.Summarizer
 	storage        *storage.Storage
-	postedArticles map[string]bool
 	ctx            context.Context
 	userStates     map[int64]*ConversationState
 	stateMutex     sync.Mutex
-	configMutex    sync.RWMutex
-	isFetching     bool
-	fetchingMutex  sync.Mutex
-	cancelFunc     context.CancelFunc
+	summarizers    map[string]*ai.Summarizer
+	summarizerMutex sync.RWMutex
+	isFetching      bool
+	fetchingMutex   sync.Mutex
+	cancelFunc      context.CancelFunc
 }
 
 func NewBot(
 	ctx context.Context,
-	cfg *config.Config,
+	globalCfg *config.GlobalConfig,
+	defaultChatCfg *config.Config,
 	localizer *localization.Localizer,
 	fetcher *news_fetcher.Fetcher,
 	scheduler *scheduler.Scheduler,
 	storage *storage.Storage,
 ) (*TelegramBot, error) {
-	api, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
+	api, err := tgbotapi.NewBotAPI(globalCfg.TelegramBotToken)
 	if err != nil {
 		return nil, err
 	}
-	postedLinks, err := storage.LoadPostedLinks()
-	if err != nil {
-		return nil, fmt.Errorf("could not load posted links from db: %w", err)
-	}
+
 	bot := &TelegramBot{
 		api:            api,
-		cfg:            cfg,
+		globalCfg:      globalCfg,
+		defaultChatCfg: defaultChatCfg,
 		localizer:      localizer,
 		fetcher:        fetcher,
 		scheduler:      scheduler,
 		storage:        storage,
-		postedArticles: postedLinks,
 		userStates:     make(map[int64]*ConversationState),
+		summarizers:    make(map[string]*ai.Summarizer),
 		ctx:            ctx,
 	}
-	if err := bot.reloadSummarizer(); err != nil {
-		return nil, fmt.Errorf("failed to initialize summarizer: %w", err)
-	}
+
 	return bot, nil
 }
 
-func (b *TelegramBot) reloadSummarizer() error {
-	log.Println("Reloading AI Summarizer with new settings...")
-	b.configMutex.RLock()
-	apiKey := b.cfg.GeminiAPIKey
-	model := b.cfg.GeminiModel
-	prompt := b.cfg.AiPrompt
-	b.configMutex.RUnlock()
-	summarizer, err := ai.NewSummarizer(b.ctx, apiKey, model, prompt)
-	if err != nil {
-		log.Printf("CRITICAL: Failed to reload summarizer: %v", err)
-		return err
+func (b *TelegramBot) getSummarizerForChat(chatCfg *config.Config) (*ai.Summarizer, error) {
+	b.summarizerMutex.RLock()
+	configKey := fmt.Sprintf("%s-%s", chatCfg.GeminiModel, chatCfg.AiPrompt)
+	summarizer, exists := b.summarizers[configKey]
+	b.summarizerMutex.RUnlock()
+
+	if exists {
+		return summarizer, nil
 	}
-	b.summarizer = summarizer
-	log.Println("AI Summarizer reloaded successfully.")
-	return nil
+
+	b.summarizerMutex.Lock()
+	defer b.summarizerMutex.Unlock()
+
+	summarizer, exists = b.summarizers[configKey]
+	if exists {
+		return summarizer, nil
+	}
+
+	log.Printf("Creating new summarizer instance for model %s", chatCfg.GeminiModel)
+	newSummarizer, err := ai.NewSummarizer(b.ctx, b.globalCfg.GeminiAPIKey, chatCfg.GeminiModel, chatCfg.AiPrompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new summarizer instance: %w", err)
+	}
+
+	b.summarizers[configKey] = newSummarizer
+	return newSummarizer, nil
 }
 
 func (b *TelegramBot) Start() {
-	b.configMutex.RLock()
-	username := b.api.Self.UserName
-	b.configMutex.RUnlock()
 	b.api.Debug = false
-	log.Printf("Authorized on account %s", username)
-	b.scheduleNewsFetching()
+	log.Printf("Authorized on account %s", b.api.Self.UserName)
+
+	b.scheduleGlobalNewsFetching()
 	b.scheduler.Start()
+
 	b.listenForUpdates()
 }
 
@@ -109,32 +116,65 @@ func (b *TelegramBot) listenForUpdates() {
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
 	for update := range updates {
-		if update.CallbackQuery != nil {
-			if !b.isAdmin(update.CallbackQuery.From.ID) {
-				lang := b.getLang()
-				b.api.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, b.localizer.GetMessage(lang, "permission_denied")))
-				continue
-			}
-			b.handleCallbackQuery(update.CallbackQuery)
+		if update.MyChatMember != nil {
+			go b.handleChatMemberUpdate(update.MyChatMember)
 			continue
 		}
+
+		if update.CallbackQuery != nil {
+			go b.handleCallbackQuery(update.CallbackQuery)
+			continue
+		}
+
 		if update.Message == nil {
 			continue
 		}
+
 		if update.Message.IsCommand() {
-			b.handleCommand(update.Message)
+			go b.handleCommand(update.Message)
 			continue
 		}
-		userID := update.Message.From.ID
+
 		b.stateMutex.Lock()
-		state, ok := b.userStates[userID]
+		_, ok := b.userStates[update.Message.From.ID]
 		b.stateMutex.Unlock()
+
 		if ok {
-			if !b.isAdmin(userID) {
-				b.clearUserState(userID)
-				continue
+			go b.handleStatefulMessage(update.Message)
+		}
+	}
+}
+
+func (b *TelegramBot) handleChatMemberUpdate(update *tgbotapi.ChatMemberUpdated) {
+	chatID := update.Chat.ID
+
+	if (update.NewChatMember.Status == "member" || update.NewChatMember.Status == "administrator") && update.NewChatMember.User.ID == b.api.Self.ID {
+		log.Printf("Bot was added to new chat: %s (ID: %d)", update.Chat.Title, chatID)
+
+		isConfigured, err := b.storage.IsChatConfigured(chatID)
+		if err != nil {
+			log.Printf("Error checking if chat %d is configured: %v", chatID, err)
+			return
+		}
+
+		if !isConfigured {
+			log.Printf("Chat %d is new. Creating default configuration...", chatID)
+			err := b.storage.CreateDefaultChatConfig(chatID, b.defaultChatCfg)
+			if err != nil {
+				log.Printf("Failed to create default config for chat %d: %v", chatID, err)
+				return
 			}
-			b.handleStatefulMessage(update.Message, state)
+			lang := b.getLangForChat(chatID)
+			welcomeText := b.localizer.GetMessage(lang, "welcome_message")
+			guidanceText := "\n\nAdmins of this chat can now configure me using /settings or type /help for more info."
+			if lang == "id" {
+				guidanceText = "\n\nAdmin dari chat ini sekarang dapat mengonfigurasi saya menggunakan /settings atau ketik /help untuk info lebih lanjut."
+			}
+
+			msg := tgbotapi.NewMessage(chatID, welcomeText+guidanceText)
+			b.api.Send(msg)
+		} else {
+			log.Printf("Bot re-joined chat %d. Configuration already exists.", chatID)
 		}
 	}
 }

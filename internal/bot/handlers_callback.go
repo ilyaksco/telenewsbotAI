@@ -14,18 +14,41 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	userID := callback.From.ID
 	chatID := callback.Message.Chat.ID
 	messageID := callback.Message.MessageID
-	lang := b.getLang()
+	lang := b.getLangForChat(chatID)
+
+	if !b.isChatAdmin(chatID, userID) {
+		b.api.Request(tgbotapi.NewCallback(callback.ID, b.localizer.GetMessage(lang, "permission_denied")))
+		return
+	}
+
 	callbackData := strings.Split(callback.Data, ":")
 	action := callbackData[0]
 	var data string
 	if len(callbackData) > 1 {
 		data = strings.Join(callbackData[1:], ":")
 	}
+
 	msg := tgbotapi.NewMessage(chatID, "")
 	callbackAns := tgbotapi.NewCallback(callback.ID, "")
 
 	switch action {
-	// Settings Callbacks
+	case "set_lang":
+		newLang := data
+		if err := b.storage.UpdateChatConfig(chatID, "language_code", newLang); err != nil {
+			log.Printf("Failed to update language_code for chat %d: %v", chatID, err)
+			callbackAns.Text = "Failed to update language."
+			callbackAns.ShowAlert = true
+		} else {
+			responseText := "Language has been updated."
+			if newLang == "id" {
+				responseText = "Bahasa telah berhasil diperbarui."
+			}
+			editMsg := tgbotapi.NewEditMessageText(chatID, messageID, responseText)
+			b.api.Send(editMsg)
+			// Resend settings menu in new language
+			b.handleSettingsCommand(callback.Message)
+		}
+
 	case "edit_ai_prompt":
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingAIPrompt})
 		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_ai_prompt")
@@ -33,10 +56,6 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	case "edit_post_limit":
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingPostLimit})
 		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_post_limit")
-		b.api.Send(msg)
-	case "edit_schedule":
-		b.setUserState(userID, &ConversationState{Step: StateAwaitingSchedule})
-		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_schedule")
 		b.api.Send(msg)
 	case "edit_rss_max_age":
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingRSSMaxAge})
@@ -50,17 +69,16 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		msg.ParseMode = tgbotapi.ModeHTML
 		b.api.Send(msg)
 	case "toggle_approval_system":
-		b.configMutex.Lock()
-		b.cfg.EnableApprovalSystem = !b.cfg.EnableApprovalSystem
-		currentValue := b.cfg.EnableApprovalSystem
-		b.configMutex.Unlock()
-
-		if err := b.storage.SetSetting("enable_approval_system", strconv.FormatBool(currentValue)); err != nil {
-			log.Printf("Failed to update enable_approval_system in db: %v", err)
+		cfg, err := b.storage.GetChatConfig(chatID)
+		if err != nil {
+			log.Printf("Error getting chat config for %d: %v", chatID, err)
+			return
 		}
-
-		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
-		b.api.Request(deleteConfig)
+		newValue := !cfg.EnableApprovalSystem
+		if err := b.storage.UpdateChatConfig(chatID, "enable_approval_system", newValue); err != nil {
+			log.Printf("Failed to update enable_approval_system for chat %d: %v", chatID, err)
+		}
+		b.api.Request(tgbotapi.NewDeleteMessage(chatID, messageID))
 		b.handleSettingsCommand(callback.Message)
 
 	case "edit_approval_chat_id":
@@ -69,23 +87,17 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.api.Send(msg)
 
 	case "set_gemini_model":
-		b.configMutex.Lock()
-		b.cfg.GeminiModel = data
-		b.configMutex.Unlock()
-		if err := b.storage.SetSetting("gemini_model", data); err != nil {
-			log.Printf("Failed to update gemini_model in db: %v", err)
+		if err := b.storage.UpdateChatConfig(chatID, "gemini_model", data); err != nil {
+			log.Printf("Failed to update gemini_model in db for chat %d: %v", chatID, err)
 		}
-		b.reloadSummarizer()
 		successMsg := tgbotapi.NewEditMessageText(chatID, messageID, b.localizer.GetMessage(lang, "setting_updated_success"))
 		b.api.Send(successMsg)
 
 	case "refresh_settings":
-		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
-		b.api.Request(deleteConfig)
+		b.api.Request(tgbotapi.NewDeleteMessage(chatID, messageID))
 		b.handleSettingsCommand(callback.Message)
 		callbackAns.Text = "Settings Refreshed"
 
-	// Source Management Callbacks
 	case "manage_sources":
 		b.sendSourcesMenu(chatID, messageID)
 	case "view_sources":
@@ -99,13 +111,12 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.sendDeleteConfirmation(chatID, messageID, sourceID)
 	case "execute_delete_source":
 		sourceID, _ := strconv.ParseInt(data, 10, 64)
-		if err := b.storage.DeleteNewsSource(sourceID); err != nil {
-			log.Printf("Failed to delete source with id %d: %v", sourceID, err)
+		if err := b.storage.DeleteNewsSource(sourceID, chatID); err != nil {
+			log.Printf("Failed to delete source with id %d for chat %d: %v", sourceID, chatID, err)
 		}
 		callbackAns.Text = b.localizer.GetMessage(lang, "source_deleted_success")
 		b.handleDeleteSourceMenu(chatID, messageID)
 
-	// Add Source Flow Callbacks
 	case "chose_source_type":
 		sourceType := data
 		state := &ConversationState{Step: StateAwaitingSourceURL, PendingSource: news_fetcher.Source{Type: sourceType}}
@@ -121,19 +132,17 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		if ok && state.Step == StateAwaitingTopicSelection {
 			state.PendingSource.TopicID = topicID
 			var responseText string
-			if err := b.storage.AddNewsSource(state.PendingSource); err != nil {
-				log.Printf("Failed to add new source to db: %v", err)
-				responseText = "Failed to add source. The URL might already exist."
+			if err := b.storage.AddNewsSource(chatID, state.PendingSource); err != nil {
+				log.Printf("Failed to add new source to db for chat %d: %v", chatID, err)
+				responseText = "Failed to add source. The URL might already exist for this chat."
 			} else {
 				responseText = b.localizer.GetMessage(lang, "source_added_success")
 			}
 			delete(b.userStates, userID)
-
 			finalMsg := tgbotapi.NewEditMessageText(chatID, messageID, responseText)
 			b.api.Send(finalMsg)
 		}
 
-	// Topic Management Callbacks
 	case "manage_topics":
 		b.sendTopicsMenu(chatID, messageID)
 	case "view_topics_list":
@@ -146,19 +155,16 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.sendDeleteTopicMenu(chatID, messageID)
 	case "delete_topic":
 		topicID, _ := strconv.ParseInt(data, 10, 64)
-		inUse, err := b.storage.IsTopicInUse(topicID)
+		inUse, err := b.storage.IsTopicInUse(topicID, chatID)
 		if err != nil {
-			log.Printf("Error checking if topic %d is in use: %v", topicID, err)
+			log.Printf("Error checking if topic %d is in use for chat %d: %v", topicID, chatID, err)
 			callbackAns.Text = "An error occurred."
-			b.api.Request(callbackAns)
-			return
-		}
-		if inUse {
+		} else if inUse {
 			callbackAns.Text = b.localizer.GetMessage(lang, "delete_topic_in_use")
 			callbackAns.ShowAlert = true
 		} else {
-			if err := b.storage.DeleteTopic(topicID); err != nil {
-				log.Printf("Failed to delete topic %d: %v", topicID, err)
+			if err := b.storage.DeleteTopic(topicID, chatID); err != nil {
+				log.Printf("Failed to delete topic %d for chat %d: %v", topicID, chatID, err)
 				callbackAns.Text = "Failed to delete topic."
 			} else {
 				callbackAns.Text = b.localizer.GetMessage(lang, "delete_topic_success")
@@ -166,7 +172,6 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 			b.sendDeleteTopicMenu(chatID, messageID)
 		}
 
-	// Approval System Callbacks
 	case "approve_article":
 		b.handleApproveArticle(callback)
 	case "reject_article":
@@ -174,35 +179,45 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	case "edit_article":
 		b.handleEditArticle(callback)
 
-	// General UI Callbacks
 	case "cancel_edit":
 		b.sendSourcesMenu(chatID, messageID)
 	case "back_to_settings":
-		deleteConfig := tgbotapi.NewDeleteMessage(chatID, messageID)
-		b.api.Request(deleteConfig)
+		b.api.Request(tgbotapi.NewDeleteMessage(chatID, messageID))
 		b.handleSettingsCommand(callback.Message)
 	}
 
-	if _, err := b.api.Request(callbackAns); err != nil {
-		log.Printf("Failed to answer callback query: %v", err)
+	if callbackAns.Text != "" {
+		if _, err := b.api.Request(callbackAns); err != nil {
+			log.Printf("Failed to answer callback query: %v", err)
+		}
 	}
 }
 
 func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
-	lang := b.getLang()
 	articleID, _ := strconv.ParseInt(strings.Split(callback.Data, ":")[1], 10, 64)
 
 	pendingArticle, err := b.storage.GetPendingArticle(articleID)
 	if err != nil {
 		log.Printf("Failed to get pending article %d: %v", articleID, err)
-		callbackAns := tgbotapi.NewCallback(callback.ID, "This article has already been processed.")
-		b.api.Request(callbackAns)
+		b.api.Request(tgbotapi.NewCallback(callback.ID, "This article has already been processed."))
 		return
 	}
 
-	topic, err := b.storage.GetTopicByName(pendingArticle.TopicName)
+	lang := b.getLangForChat(pendingArticle.ChatID)
+	if !b.isChatAdmin(pendingArticle.ChatID, callback.From.ID) {
+		b.api.Request(tgbotapi.NewCallback(callback.ID, b.localizer.GetMessage(lang, "permission_denied")))
+		return
+	}
+
+	chatCfg, err := b.storage.GetChatConfig(pendingArticle.ChatID)
 	if err != nil {
-		log.Printf("Failed to get topic destination for '%s': %v", pendingArticle.TopicName, err)
+		log.Printf("Could not get config for chat %d to approve article: %v", pendingArticle.ChatID, err)
+		return
+	}
+
+	topic, err := b.storage.GetTopicByName(pendingArticle.ChatID, pendingArticle.TopicName)
+	if err != nil {
+		log.Printf("Failed to get topic destination for '%s' in chat %d: %v", pendingArticle.TopicName, pendingArticle.ChatID, err)
 	}
 
 	articleToPost := &news_fetcher.Article{
@@ -215,6 +230,7 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 	var source news_fetcher.Source
 	if topic != nil {
 		source = news_fetcher.Source{
+			ChatID:            pendingArticle.ChatID,
 			URL:               "https://" + pendingArticle.SourceName,
 			TopicName:         pendingArticle.TopicName,
 			DestinationChatID: topic.DestinationChatID,
@@ -222,18 +238,19 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 		}
 	} else {
 		source = news_fetcher.Source{
+			ChatID:    pendingArticle.ChatID,
 			URL:       "https://" + pendingArticle.SourceName,
 			TopicName: pendingArticle.TopicName,
 		}
 	}
 
-	if err := b.sendArticleToChannel(articleToPost, pendingArticle.Summary, source); err != nil {
-		log.Printf("Failed to send approved article to channel: %v", err)
+	if err := b.sendArticleToChannel(articleToPost, pendingArticle.Summary, source, chatCfg); err != nil {
+		log.Printf("Failed to send approved article to channel for chat %d: %v", pendingArticle.ChatID, err)
 		return
 	}
 
-	if err := b.storage.MarkAsPosted(pendingArticle.Link); err != nil {
-		log.Printf("CRITICAL: Failed to mark approved article as posted: %v", err)
+	if err := b.storage.MarkAsPosted(pendingArticle.Link, pendingArticle.ChatID); err != nil {
+		log.Printf("CRITICAL: Failed to mark approved article as posted for chat %d: %v", pendingArticle.ChatID, err)
 	}
 	b.storage.DeletePendingArticle(articleID)
 
@@ -245,19 +262,23 @@ func (b *TelegramBot) handleApproveArticle(callback *tgbotapi.CallbackQuery) {
 }
 
 func (b *TelegramBot) handleRejectArticle(callback *tgbotapi.CallbackQuery) {
-	lang := b.getLang()
 	articleID, _ := strconv.ParseInt(strings.Split(callback.Data, ":")[1], 10, 64)
 
 	pendingArticle, err := b.storage.GetPendingArticle(articleID)
 	if err != nil {
 		log.Printf("Failed to get pending article %d for rejection: %v", articleID, err)
-		callbackAns := tgbotapi.NewCallback(callback.ID, "This article has already been processed.")
-		b.api.Request(callbackAns)
+		b.api.Request(tgbotapi.NewCallback(callback.ID, "This article has already been processed."))
 		return
 	}
 
-	if err := b.storage.MarkAsPosted(pendingArticle.Link); err != nil {
-		log.Printf("Failed to mark rejected article as posted: %v", err)
+	lang := b.getLangForChat(pendingArticle.ChatID)
+	if !b.isChatAdmin(pendingArticle.ChatID, callback.From.ID) {
+		b.api.Request(tgbotapi.NewCallback(callback.ID, b.localizer.GetMessage(lang, "permission_denied")))
+		return
+	}
+
+	if err := b.storage.MarkAsPosted(pendingArticle.Link, pendingArticle.ChatID); err != nil {
+		log.Printf("Failed to mark rejected article as posted for chat %d: %v", pendingArticle.ChatID, err)
 	}
 	b.storage.DeletePendingArticle(articleID)
 
@@ -269,10 +290,21 @@ func (b *TelegramBot) handleRejectArticle(callback *tgbotapi.CallbackQuery) {
 }
 
 func (b *TelegramBot) handleEditArticle(callback *tgbotapi.CallbackQuery) {
-	lang := b.getLang()
 	articleID, _ := strconv.ParseInt(strings.Split(callback.Data, ":")[1], 10, 64)
 
-	// MODIFIED: Store original message details including text
+	pendingArticle, err := b.storage.GetPendingArticle(articleID)
+	if err != nil {
+		log.Printf("Failed to get pending article %d for edit: %v", articleID, err)
+		b.api.Request(tgbotapi.NewCallback(callback.ID, "This article has already been processed."))
+		return
+	}
+
+	lang := b.getLangForChat(pendingArticle.ChatID)
+	if !b.isChatAdmin(pendingArticle.ChatID, callback.From.ID) {
+		b.api.Request(tgbotapi.NewCallback(callback.ID, b.localizer.GetMessage(lang, "permission_denied")))
+		return
+	}
+
 	b.setUserState(callback.From.ID, &ConversationState{
 		Step:                StateAwaitingArticleEdit,
 		PendingArticleID:    articleID,

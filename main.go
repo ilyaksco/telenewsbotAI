@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
+	"io/ioutil"
 	"log"
 	"news-bot/config"
 	"news-bot/internal/bot"
@@ -12,16 +12,54 @@ import (
 	"news-bot/internal/scheduler"
 	"news-bot/internal/storage"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 )
 
 //go:embed locales
 var localeFiles embed.FS
 
-func main() {
-	log.Println("Starting AI News Bot...")
+const pidFile = "bot.pid"
 
-	ctx := context.Background()
+func main() {
+	// --- PID File Handling: Prevent duplicate instances ---
+	if _, err := os.Stat(pidFile); err == nil {
+		log.Fatalf("PID file '%s' already exists. Another instance might be running. If not, please delete the file manually.", pidFile)
+	}
+
+	pid := os.Getpid()
+	if err := ioutil.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		log.Fatalf("Failed to write PID file: %v", err)
+	}
+	defer os.Remove(pidFile) // Ensure PID file is removed on exit
+
+	log.Println("Starting AI News Bot (Multi-Tenant Mode)...")
+	log.Printf("Process started with PID: %d", pid)
+
+	// --- Graceful Shutdown Handling ---
+	ctx, cancel := context.WithCancel(context.Background())
+	shutdownChan := make(chan os.Signal, 1)
+	signal.Notify(shutdownChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-shutdownChan
+		log.Println("Shutdown signal received, stopping bot gracefully...")
+		cancel()
+		os.Remove(pidFile) // backup removal
+		os.Exit(0)
+	}()
+
+	// --- Bot Initialization ---
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		log.Fatalf("Failed to load global config from .env: %v", err)
+	}
+
+	defaultChatCfg, err := config.GetDefaultChatConfig()
+	if err != nil {
+		log.Fatalf("Failed to load default chat config: %v", err)
+	}
 
 	dbStorage, err := storage.NewStorage("newsbot.db")
 	if err != nil {
@@ -29,44 +67,10 @@ func main() {
 	}
 	defer dbStorage.Close()
 
-	cfg, found, err := config.LoadConfigFromDB(dbStorage)
-	if err != nil {
-		log.Fatalf("Failed to load config from DB: %v", err)
-	}
-	if !found {
-		log.Println("No settings found in database. Loading from .env and saving to DB...")
-		envCfg, err := config.LoadConfigFromEnv()
-		if err != nil {
-			log.Fatalf("Failed to load config from .env: %v", err)
-		}
-		err = config.SaveConfigToDB(dbStorage, &envCfg)
-		if err != nil {
-			log.Fatalf("Failed to save initial config to DB: %v", err)
-		}
-		cfg = &envCfg
-	} else {
-		log.Println("Settings successfully loaded from database.")
-	}
-
-	// Force-reread SuperAdminID from .env on every startup for security and resilience.
-	superAdminIDFromEnv, err := config.GetSuperAdminFromEnv()
-	if err != nil {
-		log.Printf("WARNING: Could not read SUPER_ADMIN_ID from .env on startup: %v. Using value from DB.", err)
-	} else if superAdminIDFromEnv != cfg.SuperAdminID {
-		log.Printf("SuperAdminID from .env (%d) differs from DB (%d). Overwriting with .env value.", superAdminIDFromEnv, cfg.SuperAdminID)
-		cfg.SuperAdminID = superAdminIDFromEnv
-		if err := dbStorage.SetSetting("super_admin_id", strconv.FormatInt(cfg.SuperAdminID, 10)); err != nil {
-			log.Printf("WARNING: Could not update super_admin_id in DB with value from .env.")
-		}
-	}
-
-	if err := dbStorage.SetUserAdmin(cfg.SuperAdminID, true); err != nil {
+	if err := dbStorage.SetSuperAdmin(globalCfg.SuperAdminID, true); err != nil {
 		log.Fatalf("Failed to set superadmin status in db: %v", err)
 	}
-	log.Printf("Superadmin with ID %d ensured.", cfg.SuperAdminID)
-
-	// Migrasi sumber berita dari sources.json jika DB kosong
-	migrateSourcesFromJSON(dbStorage, cfg.NewsSourcesFilePath)
+	log.Printf("Superadmin with ID %d ensured.", globalCfg.SuperAdminID)
 
 	localizer := localization.NewLocalizer(localeFiles)
 	fetcher := news_fetcher.NewFetcher()
@@ -74,50 +78,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create scheduler: %v", err)
 	}
-	telegramBot, err := bot.NewBot(ctx, cfg, localizer, fetcher, appScheduler, dbStorage)
+
+	telegramBot, err := bot.NewBot(ctx, globalCfg, defaultChatCfg, localizer, fetcher, appScheduler, dbStorage)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
-	log.Println("Bot is running...")
+
+	log.Println("Bot is running... Press Ctrl+C to exit.")
 	telegramBot.Start()
-}
-
-func migrateSourcesFromJSON(s *storage.Storage, filePath string) {
-	isEmpty, err := s.IsNewsSourcesEmpty()
-	if err != nil {
-		log.Printf("Failed to check if news sources are empty: %v", err)
-		return
-	}
-
-	if !isEmpty {
-		log.Println("Database already contains news sources, skipping migration from JSON.")
-		return
-	}
-
-	log.Println("No news sources found in database. Attempting to migrate from sources.json...")
-
-	file, err := os.ReadFile(filePath)
-	if err != nil {
-		log.Printf("Could not read sources.json file at %s, please add sources manually via Telegram: %v", filePath, err)
-		return
-	}
-
-	var sources []news_fetcher.Source
-	if err := json.Unmarshal(file, &sources); err != nil {
-		log.Printf("Failed to parse sources.json: %v", err)
-		return
-	}
-
-	migratedCount := 0
-	for _, source := range sources {
-		if err := s.AddNewsSource(source); err != nil {
-			log.Printf("Failed to migrate source %s: %v", source.URL, err)
-			continue
-		}
-		migratedCount++
-	}
-
-	if migratedCount > 0 {
-		log.Printf("Successfully migrated %d news sources from %s to the database.", migratedCount, filePath)
-	}
 }
