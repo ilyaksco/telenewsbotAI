@@ -13,7 +13,7 @@ import (
 func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	chatID := message.Chat.ID
 	userID := message.From.ID
-	
+
 	if err := b.ensureChatIsConfigured(chatID); err != nil {
 		log.Printf("Critical error ensuring chat config for %d: %v", chatID, err)
 		return
@@ -39,7 +39,6 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 
 	switch cmd {
 	case "start":
-		// MODIFIED: This is now the main entry point for setting up a chat.
 		isConfigured, err := b.storage.IsChatConfigured(chatID)
 		if err != nil {
 			log.Printf("Error checking if chat %d is configured on /start: %v", chatID, err)
@@ -53,16 +52,14 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 				return
 			}
 		}
-		// Now that config is guaranteed, get the correct language.
 		lang = b.getLangForChat(chatID)
 		welcomeMsg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "welcome_message"))
 		b.api.Send(welcomeMsg)
 
-		// Also send the help message to guide new users.
 		helpMsg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "help_message_user"))
 		helpMsg.ParseMode = tgbotapi.ModeHTML
 		b.api.Send(helpMsg)
-		return // Return here as we've sent our messages.
+		return
 
 	case "help":
 		msg.Text = b.localizer.GetMessage(lang, "help_message_user")
@@ -102,7 +99,6 @@ func (b *TelegramBot) handleCommand(message *tgbotapi.Message) {
 	}
 }
 
-
 func (b *TelegramBot) handleLangCommand(message *tgbotapi.Message) {
 	chatID := message.Chat.ID
 	text := "Please choose your preferred language:"
@@ -121,20 +117,18 @@ func (b *TelegramBot) handleLangCommand(message *tgbotapi.Message) {
 }
 
 func (b *TelegramBot) handleFetchNowCommand(message *tgbotapi.Message) {
-	// MODIFIED: Get language dynamically and use it.
 	lang := b.getLangForChat(message.Chat.ID)
-	go b.fetchAndPostNews(context.Background(), message.Chat.ID)
+	go b.fetchNewsForChat(context.Background(), message.Chat.ID, true)
 	msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_now_started"))
 	b.api.Send(msg)
 }
 
 func (b *TelegramBot) handleFetchStopCommand(message *tgbotapi.Message) {
-	// MODIFIED: Get language dynamically and use it.
 	lang := b.getLangForChat(message.Chat.ID)
 	b.fetchingMutex.Lock()
 	defer b.fetchingMutex.Unlock()
 
-	if b.isFetching && b.cancelFunc != nil {
+	if b.cancelFunc != nil {
 		b.cancelFunc()
 		msg := tgbotapi.NewMessage(message.Chat.ID, b.localizer.GetMessage(lang, "fetch_stop_in_progress"))
 		b.api.Send(msg)
@@ -213,6 +207,7 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_ai_prompt"), cfg.AiPrompt))
 	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_gemini_model"), cfg.GeminiModel))
 	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_post_limit_per_run"), strconv.Itoa(cfg.PostLimitPerRun)))
+	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_schedule_interval_minutes"), fmt.Sprintf("%d minutes", cfg.ScheduleIntervalMinutes)))
 	builder.WriteString(fmt.Sprintf(b.localizer.GetMessage(lang, "settings_format"), b.localizer.GetMessage(lang, "setting_name_rss_max_age_hours"), fmt.Sprintf("%d hours", cfg.RSSMaxAgeHours)))
 
 	approvalStatus := "Disabled"
@@ -252,6 +247,7 @@ func (b *TelegramBot) handleSettingsCommand(message *tgbotapi.Message) {
 			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_msg_template"), "edit_msg_template"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_schedule"), "edit_schedule"),
 			tgbotapi.NewInlineKeyboardButtonData(b.localizer.GetMessage(lang, "btn_edit_rss_max_age"), "edit_rss_max_age"),
 		),
 		tgbotapi.NewInlineKeyboardRow(

@@ -10,17 +10,13 @@ import (
 	"github.com/kelseyhightower/envconfig"
 )
 
-// GlobalConfig holds configuration for the bot application itself.
-// These are loaded from the environment and are not chat-specific.
 type GlobalConfig struct {
 	TelegramBotToken string `envconfig:"TELEGRAM_BOT_TOKEN" required:"true"`
 	GeminiAPIKey     string `envconfig:"GEMINI_API_KEY"     required:"true"`
 	SuperAdminID     int64  `envconfig:"SUPER_ADMIN_ID"     required:"true"`
-	GlobalScheduleMinutes int    `envconfig:"GLOBAL_SCHEDULE_MINUTES" default:"15"` 
+	GlobalScheduleMinutes int    `envconfig:"GLOBAL_SCHEDULE_MINUTES" default:"15"`
 }
 
-// Config represents chat-specific settings.
-// These are stored in the database for each chat.
 type Config struct {
 	AiPrompt                string `json:"ai_prompt"`
 	GeminiModel             string `json:"gemini_model"`
@@ -30,6 +26,7 @@ type Config struct {
 	ApprovalChatID          int64  `json:"approval_chat_id"`
 	RSSMaxAgeHours          int    `json:"rss_max_age_hours"`
 	LanguageCode            string `json:"language_code"`
+	ScheduleIntervalMinutes int    `json:"schedule_interval_minutes"`
 }
 
 func LoadGlobalConfig() (*GlobalConfig, error) {
@@ -46,8 +43,6 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	return &cfg, nil
 }
 
-// GetDefaultChatConfig creates a default configuration for a new chat.
-// It uses values from a .env file for defaults.
 func GetDefaultChatConfig() (*Config, error) {
 	err := godotenv.Load()
 	if err != nil {
@@ -96,5 +91,6 @@ func GetDefaultChatConfig() (*Config, error) {
 		EnableApprovalSystem:    approval,
 		ApprovalChatID:          approvalChat,
 		RSSMaxAgeHours:          rssMaxAge,
+		ScheduleIntervalMinutes: schedule,
 	}, nil
 }

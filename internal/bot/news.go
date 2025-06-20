@@ -15,105 +15,130 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func (b *TelegramBot) scheduleGlobalNewsFetching() {
-	interval := time.Duration(b.globalCfg.GlobalScheduleMinutes) * time.Minute
-	log.Printf("Scheduling global news fetching job. Interval: %v", interval)
-	b.scheduler.AddJob(newsFetchingJobTag, interval, b.globalNewsFetchingJob)
+func (b *TelegramBot) scheduleNewsDispatcher() {
+	interval := 1 * time.Minute
+	log.Printf("Scheduling news dispatcher job. Interval: %v", interval)
+	b.scheduler.AddJob(newsFetchingJobTag, interval, b.dispatchScheduledFetches)
 }
 
-func (b *TelegramBot) globalNewsFetchingJob() {
-	log.Println("Global scheduler fired: Fetching news for all chats...")
-	go b.fetchAndPostNews(context.Background())
-}
-
-func (b *TelegramBot) fetchAndPostNews(parentCtx context.Context, notifyChatID ...int64) {
-	b.fetchingMutex.Lock()
-	if b.isFetching {
-		log.Println("Global fetch process trigger ignored: another process is already running.")
-		b.fetchingMutex.Unlock()
+func (b *TelegramBot) dispatchScheduledFetches() {
+	allConfigs, err := b.storage.GetAllChatConfigs()
+	if err != nil {
+		log.Printf("Dispatcher: Failed to get all chat configs: %v", err)
 		return
 	}
 
-	ctx, cancel := context.WithCancel(parentCtx)
-	b.isFetching = true
-	b.cancelFunc = cancel
+	now := time.Now()
+	for _, chatConfigWithID := range allConfigs {
+		chatID := chatConfigWithID.ChatID
+		chatCfg := chatConfigWithID.Config
+		lastFetched := chatConfigWithID.LastFetchedAt
+
+		nextFetchTime := lastFetched.Add(time.Duration(chatCfg.ScheduleIntervalMinutes) * time.Minute)
+
+		if now.After(nextFetchTime) {
+			log.Printf("Dispatcher: Chat %d is due for news fetch. Triggering now.", chatID)
+			go b.fetchNewsForChat(b.ctx, chatID, false)
+		}
+	}
+}
+
+func (b *TelegramBot) fetchNewsForChat(parentCtx context.Context, chatID int64, manual bool) {
+	b.fetchingMutex.Lock()
+	if b.isFetching[chatID] {
+		log.Printf("Fetch process for chat %d ignored: another process is already running for this chat.", chatID)
+		b.fetchingMutex.Unlock()
+		return
+	}
+	b.isFetching[chatID] = true
 	b.fetchingMutex.Unlock()
 
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer func() {
 		b.fetchingMutex.Lock()
-		b.isFetching = false
-		b.cancelFunc = nil
+		delete(b.isFetching, chatID)
+		if manual {
+			b.cancelFunc = nil
+		}
 		b.fetchingMutex.Unlock()
+		cancel()
 
-		lang := "en"
-		if errors.Is(ctx.Err(), context.Canceled) {
-			log.Println("News fetching process was stopped by user.")
-			if len(notifyChatID) > 0 {
-				msg := tgbotapi.NewMessage(notifyChatID[0], b.localizer.GetMessage(lang, "fetch_stop_success"))
+		lang := b.getLangForChat(chatID)
+		if manual {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				log.Printf("Manual news fetching process for chat %d was stopped.", chatID)
+				msg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "fetch_stop_success"))
+				b.api.Send(msg)
+			} else {
+				log.Printf("Manual news fetching process for chat %d finished.", chatID)
+				msg := tgbotapi.NewMessage(chatID, b.localizer.GetMessage(lang, "fetch_now_completed"))
 				b.api.Send(msg)
 			}
 		} else {
-			log.Println("Global news fetching process finished.")
-			if len(notifyChatID) > 0 {
-				msg := tgbotapi.NewMessage(notifyChatID[0], b.localizer.GetMessage(lang, "fetch_now_completed"))
-				b.api.Send(msg)
-			}
+			log.Printf("Scheduled news fetching for chat %d finished.", chatID)
 		}
 	}()
 
-	log.Println("Starting global news fetching process...")
+	if manual {
+		b.fetchingMutex.Lock()
+		b.cancelFunc = cancel
+		b.fetchingMutex.Unlock()
+	}
 
-	// 1. Get all sources from all chats
-	allSources, err := b.storage.GetAllNewsSources()
+	log.Printf("Starting news fetching process for chat %d...", chatID)
+
+	chatCfg, err := b.storage.GetChatConfig(chatID)
 	if err != nil {
-		log.Printf("Error getting all sources from DB: %v", err)
-		return
-	}
-	if len(allSources) == 0 {
-		log.Println("No news sources configured in any chat. Skipping fetch cycle.")
+		log.Printf("[Chat %d] Could not get config, aborting fetch. Error: %v", chatID, err)
 		return
 	}
 
-	// 2. Discover articles from all sources
-	// We use a fixed max age for the global fetcher for now.
-	discoveredArticles, err := b.fetcher.DiscoverArticles(allSources, 24)
+	sources, err := b.storage.GetNewsSourcesForChat(chatID)
 	if err != nil {
-		log.Printf("Error discovering articles: %v", err)
+		log.Printf("[Chat %d] Error getting sources from DB: %v", chatID, err)
 		return
 	}
-	log.Printf("Discovered %d total article links from all sources.", len(discoveredArticles))
+	if len(sources) == 0 {
+		log.Printf("[Chat %d] No news sources configured. Skipping fetch cycle.", chatID)
+		if !manual {
+			if err := b.storage.UpdateLastFetchedTime(chatID, time.Now()); err != nil {
+				log.Printf("[Chat %d] Failed to update last fetched time even with no sources: %v", chatID, err)
+			}
+		}
+		return
+	}
 
-	// 3. Process each article with its chat-specific context
+	discoveredArticles, err := b.fetcher.DiscoverArticles(sources, chatCfg.RSSMaxAgeHours)
+	if err != nil {
+		log.Printf("[Chat %d] Error discovering articles: %v", chatID, err)
+		return
+	}
+	log.Printf("[Chat %d] Discovered %d total article links.", chatID, len(discoveredArticles))
+
+	postedCount := 0
 	for _, articleStub := range discoveredArticles {
 		select {
 		case <-ctx.Done():
-			return // Exit if context is cancelled
+			return
 		default:
 		}
 
-		chatID := articleStub.Source.ChatID
+		if postedCount >= chatCfg.PostLimitPerRun {
+			log.Printf("[Chat %d] Post limit of %d reached for this run.", chatID, chatCfg.PostLimitPerRun)
+			break
+		}
 
-		// Check if article was already posted or is pending for this specific chat
 		posted, _ := b.storage.IsAlreadyPosted(articleStub.Link, chatID)
 		pending, _ := b.storage.IsArticlePending(articleStub.Link, chatID)
 		if posted || pending {
 			continue
 		}
-		
-		// Get chat-specific configuration
-		chatCfg, err := b.storage.GetChatConfig(chatID)
-		if err != nil {
-			log.Printf("Could not get config for chat %d, skipping article from %s. Error: %v", chatID, articleStub.Source.URL, err)
-			continue
-		}
 
-		// Check post limit for this chat (optional, complex to implement perfectly in a global fetcher, skipping for now)
-
-		log.Printf("Found new article for chat %d: %s. Scraping...", chatID, articleStub.Link)
+		log.Printf("[Chat %d] Found new article: %s. Scraping...", chatID, articleStub.Link)
 		fullArticle, err := b.fetcher.ScrapeArticleDetails(articleStub.Link)
 		if err != nil {
 			log.Printf("[Chat %d] Could not scrape article '%s': %v", chatID, articleStub.Link, err)
-			b.storage.MarkAsPosted(articleStub.Link, chatID) // Mark as posted to avoid retrying a broken link
+			b.storage.MarkAsPosted(articleStub.Link, chatID)
 			continue
 		}
 		fullArticle.PublicationTime = articleStub.PubDate
@@ -123,7 +148,7 @@ func (b *TelegramBot) fetchAndPostNews(parentCtx context.Context, notifyChatID .
 			log.Printf("[Chat %d] Could not get summarizer: %v", chatID, err)
 			continue
 		}
-		
+
 		summary, err := summarizer.Summarize(ctx, fullArticle.TextContent)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
@@ -146,6 +171,7 @@ func (b *TelegramBot) fetchAndPostNews(parentCtx context.Context, notifyChatID .
 			}
 			b.storage.MarkAsPosted(fullArticle.Link, chatID)
 		}
+		postedCount++
 
 		select {
 		case <-time.After(5 * time.Second):
@@ -153,16 +179,20 @@ func (b *TelegramBot) fetchAndPostNews(parentCtx context.Context, notifyChatID .
 			return
 		}
 	}
+
+	if !manual {
+		if err := b.storage.UpdateLastFetchedTime(chatID, time.Now()); err != nil {
+			log.Printf("[Chat %d] Failed to update last fetched time after a successful run: %v", chatID, err)
+		}
+	}
 }
 
 func (b *TelegramBot) sendArticleToChannel(article *news_fetcher.Article, summary string, source news_fetcher.Source, chatCfg *config.Config) error {
 	caption := b.formatCaption(article, summary, source, chatCfg)
 
-	// If a specific destination topic is set, use it.
 	chatID := source.DestinationChatID
 	replyToID := int(source.ReplyToMessageID)
 
-	// Otherwise, fallback to the chat where the source was configured.
 	if chatID == 0 {
 		chatID = source.ChatID
 	}
@@ -240,7 +270,7 @@ func (b *TelegramBot) formatCaption(article *news_fetcher.Article, summary strin
 }
 
 func (b *TelegramBot) sendArticleToModeration(article *news_fetcher.Article, summary string, source news_fetcher.Source, chatCfg *config.Config) error {
-	lang := "en"
+	lang := b.getLangForChat(source.ChatID)
 	sourceURL, _ := url.Parse(source.URL)
 	sourceName := strings.TrimPrefix(sourceURL.Hostname(), "www.")
 	topicName := source.TopicName

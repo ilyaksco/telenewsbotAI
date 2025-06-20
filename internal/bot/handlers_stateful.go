@@ -5,6 +5,7 @@ import (
 	"log"
 	"news-bot/internal/news_fetcher"
 	"strconv"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -40,6 +41,20 @@ func (b *TelegramBot) handleStatefulMessage(message *tgbotapi.Message) {
 			if err := b.storage.UpdateChatConfig(chatID, "post_limit_per_run", limit); err != nil {
 				log.Printf("Failed to update post_limit_per_run for chat %d: %v", chatID, err)
 			} else {
+				operationSuccessful = true
+			}
+		}
+	case StateAwaitingSchedule:
+		minutes, err := strconv.Atoi(message.Text)
+		if err != nil || minutes <= 0 {
+			msg.Text = b.localizer.GetMessage(lang, "invalid_input_not_a_number")
+		} else {
+			if err := b.storage.UpdateChatConfig(chatID, "schedule_interval_minutes", minutes); err != nil {
+				log.Printf("Failed to update schedule_interval_minutes for chat %d: %v", chatID, err)
+			} else {
+				if err := b.storage.UpdateLastFetchedTime(chatID, time.Now()); err != nil {
+					log.Printf("Failed to reset last_fetched_at for chat %d: %v", chatID, err)
+				}
 				operationSuccessful = true
 			}
 		}

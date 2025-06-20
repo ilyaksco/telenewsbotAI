@@ -11,6 +11,12 @@ import (
 )
 
 func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
+	if callback.Message == nil {
+		log.Printf("Received callback without a message, likely from an inline message. Ignoring. Callback data: %s", callback.Data)
+		b.api.Request(tgbotapi.NewCallback(callback.ID, "This action cannot be performed from here."))
+		return
+	}
+	
 	userID := callback.From.ID
 	chatID := callback.Message.Chat.ID
 	messageID := callback.Message.MessageID
@@ -45,7 +51,6 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 			}
 			editMsg := tgbotapi.NewEditMessageText(chatID, messageID, responseText)
 			b.api.Send(editMsg)
-			// Resend settings menu in new language
 			b.handleSettingsCommand(callback.Message)
 		}
 
@@ -63,6 +68,10 @@ func (b *TelegramBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		b.api.Send(msg)
 	case "edit_gemini_model":
 		b.sendModelSelectionMenu(chatID, messageID)
+	case "edit_schedule":
+		b.setUserState(userID, &ConversationState{Step: StateAwaitingSchedule})
+		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_schedule")
+		b.api.Send(msg)
 	case "edit_msg_template":
 		b.setUserState(userID, &ConversationState{Step: StateAwaitingMessageTemplate})
 		msg.Text = b.localizer.GetMessage(lang, "ask_for_new_msg_template")

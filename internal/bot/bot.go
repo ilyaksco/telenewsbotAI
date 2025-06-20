@@ -26,19 +26,19 @@ type ConversationState struct {
 }
 
 type TelegramBot struct {
-	api            *tgbotapi.BotAPI
-	globalCfg      *config.GlobalConfig
-	defaultChatCfg *config.Config
-	localizer      *localization.Localizer
-	fetcher        *news_fetcher.Fetcher
-	scheduler      *scheduler.Scheduler
-	storage        *storage.Storage
-	ctx            context.Context
-	userStates     map[int64]*ConversationState
-	stateMutex     sync.Mutex
-	summarizers    map[string]*ai.Summarizer
+	api             *tgbotapi.BotAPI
+	globalCfg       *config.GlobalConfig
+	defaultChatCfg  *config.Config
+	localizer       *localization.Localizer
+	fetcher         *news_fetcher.Fetcher
+	scheduler       *scheduler.Scheduler
+	storage         *storage.Storage
+	ctx             context.Context
+	userStates      map[int64]*ConversationState
+	stateMutex      sync.Mutex
+	summarizers     map[string]*ai.Summarizer
 	summarizerMutex sync.RWMutex
-	isFetching      bool
+	isFetching      map[int64]bool
 	fetchingMutex   sync.Mutex
 	cancelFunc      context.CancelFunc
 }
@@ -67,6 +67,7 @@ func NewBot(
 		storage:        storage,
 		userStates:     make(map[int64]*ConversationState),
 		summarizers:    make(map[string]*ai.Summarizer),
+		isFetching:     make(map[int64]bool),
 		ctx:            ctx,
 	}
 
@@ -105,7 +106,7 @@ func (b *TelegramBot) Start() {
 	b.api.Debug = false
 	log.Printf("Authorized on account %s", b.api.Self.UserName)
 
-	b.scheduleGlobalNewsFetching()
+	b.scheduleNewsDispatcher()
 	b.scheduler.Start()
 
 	b.listenForUpdates()

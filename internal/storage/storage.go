@@ -39,6 +39,12 @@ type PendingArticle struct {
 	ChatID     int64
 }
 
+type ConfigWithID struct {
+	ChatID int64
+	Config *config.Config
+	LastFetchedAt time.Time
+}
+
 func NewStorage(dbPath string) (*Storage, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -56,9 +62,6 @@ func NewStorage(dbPath string) (*Storage, error) {
 }
 
 func (s *Storage) initSchema() error {
-	// MODIFIED: All "DROP TABLE" statements are removed.
-	// Now we only ensure tables are created if they don't exist.
-	// This makes the database persistent across restarts.
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS chat_configs (
 			chat_id INTEGER PRIMARY KEY,
@@ -71,7 +74,9 @@ func (s *Storage) initSchema() error {
 			rss_max_age_hours INTEGER NOT NULL,
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			language_code TEXT NOT NULL DEFAULT 'id'
+			language_code TEXT NOT NULL DEFAULT 'id',
+			schedule_interval_minutes INTEGER NOT NULL DEFAULT 60,
+			last_fetched_at DATETIME
 		);`,
 
 		`CREATE TABLE IF NOT EXISTS news_sources (
@@ -127,14 +132,13 @@ func (s *Storage) initSchema() error {
 		}
 	}
 
-	// This is a "migration" section to add new columns to existing tables without data loss.
-	// It's safer than dropping tables.
 	alterQueries := []string{
 		`ALTER TABLE chat_configs ADD COLUMN language_code TEXT NOT NULL DEFAULT 'id'`,
+		`ALTER TABLE chat_configs ADD COLUMN schedule_interval_minutes INTEGER NOT NULL DEFAULT 60`,
+		`ALTER TABLE chat_configs ADD COLUMN last_fetched_at DATETIME`,
 	}
 	for _, query := range alterQueries {
 		if _, err := s.db.Exec(query); err != nil {
-			// Ignore error if the column already exists, which is expected on subsequent runs.
 		}
 	}
 
@@ -154,8 +158,9 @@ func (s *Storage) IsChatConfigured(chatID int64) (bool, error) {
 func (s *Storage) CreateDefaultChatConfig(chatID int64, defaultCfg *config.Config) error {
 	query := `INSERT OR IGNORE INTO chat_configs (
 		chat_id, ai_prompt, gemini_model, message_template,
-		post_limit_per_run, enable_approval_system, approval_chat_id, rss_max_age_hours, language_code
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		post_limit_per_run, enable_approval_system, approval_chat_id,
+		rss_max_age_hours, language_code, schedule_interval_minutes
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		chatID,
 		defaultCfg.AiPrompt,
@@ -166,16 +171,17 @@ func (s *Storage) CreateDefaultChatConfig(chatID int64, defaultCfg *config.Confi
 		defaultCfg.ApprovalChatID,
 		defaultCfg.RSSMaxAgeHours,
 		defaultCfg.LanguageCode,
+		defaultCfg.ScheduleIntervalMinutes,
 	)
 	return err
 }
 
 func (s *Storage) GetChatConfig(chatID int64) (*config.Config, error) {
 	var cfg config.Config
-	query := `SELECT 
+	query := `SELECT
 		ai_prompt, gemini_model, message_template,
-		post_limit_per_run, enable_approval_system, approval_chat_id, rss_max_age_hours,
-		language_code
+		post_limit_per_run, enable_approval_system, approval_chat_id,
+		rss_max_age_hours, language_code, schedule_interval_minutes
 	FROM chat_configs WHERE chat_id = ?`
 
 	err := s.db.QueryRow(query, chatID).Scan(
@@ -187,6 +193,7 @@ func (s *Storage) GetChatConfig(chatID int64) (*config.Config, error) {
 		&cfg.ApprovalChatID,
 		&cfg.RSSMaxAgeHours,
 		&cfg.LanguageCode,
+		&cfg.ScheduleIntervalMinutes,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -197,10 +204,82 @@ func (s *Storage) GetChatConfig(chatID int64) (*config.Config, error) {
 	return &cfg, nil
 }
 
+func (s *Storage) GetAllChatConfigs() ([]*ConfigWithID, error) {
+	query := `SELECT
+		chat_id, ai_prompt, gemini_model, message_template,
+		post_limit_per_run, enable_approval_system, approval_chat_id,
+		rss_max_age_hours, language_code, schedule_interval_minutes,
+		last_fetched_at
+	FROM chat_configs WHERE is_active = TRUE`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []*ConfigWithID
+	for rows.Next() {
+		var chatID int64
+		var cfg config.Config
+		var lastFetched sql.NullTime
+
+		err := rows.Scan(
+			&chatID,
+			&cfg.AiPrompt,
+			&cfg.GeminiModel,
+			&cfg.TelegramMessageTemplate,
+			&cfg.PostLimitPerRun,
+			&cfg.EnableApprovalSystem,
+			&cfg.ApprovalChatID,
+			&cfg.RSSMaxAgeHours,
+			&cfg.LanguageCode,
+			&cfg.ScheduleIntervalMinutes,
+			&lastFetched,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		configWithID := &ConfigWithID{ChatID: chatID, Config: &cfg}
+		if lastFetched.Valid {
+			configWithID.LastFetchedAt = lastFetched.Time
+		}
+
+		configs = append(configs, configWithID)
+	}
+	return configs, nil
+}
+
 func (s *Storage) UpdateChatConfig(chatID int64, key string, value interface{}) error {
 	query := fmt.Sprintf(`UPDATE chat_configs SET %s = ? WHERE chat_id = ?`, key)
 	_, err := s.db.Exec(query, value, chatID)
 	return err
+}
+
+func (s *Storage) UpdateLastFetchedTime(chatID int64, fetchTime time.Time) error {
+	query := `UPDATE chat_configs SET last_fetched_at = ? WHERE chat_id = ?`
+	_, err := s.db.Exec(query, fetchTime, chatID)
+	return err
+}
+
+func (s *Storage) GetLastFetchedTime(chatID int64) (time.Time, error) {
+	var lastFetched sql.NullTime
+	query := `SELECT last_fetched_at FROM chat_configs WHERE chat_id = ?`
+	err := s.db.QueryRow(query, chatID).Scan(&lastFetched)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+
+	if lastFetched.Valid {
+		return lastFetched.Time, nil
+	}
+
+	return time.Time{}, nil
 }
 
 func (s *Storage) MarkAsPosted(link string, chatID int64) error {
@@ -435,7 +514,6 @@ func (s *Storage) Close() {
 	s.db.Close()
 }
 
-// SuperAdmin management
 func (s *Storage) SetSuperAdmin(userID int64, isSuperAdmin bool) error {
 	query := `INSERT INTO users (user_id, is_super_admin) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET is_super_admin = excluded.is_super_admin;`
 	_, err := s.db.Exec(query, userID, isSuperAdmin)
