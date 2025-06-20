@@ -85,4 +85,4 @@ Once the bot is running, all management is done through Telegram commands. You m
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License.# telenewsbotAI
